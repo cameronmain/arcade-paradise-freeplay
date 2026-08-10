@@ -1,0 +1,40 @@
+# Build output
+bin/
+obj/
+*.user
+*.suo
+
+# Visual Studio
+.vs/
+*.VC.db
+*.VC.opendb
+*.sln.docstates
+
+# .NET
+*.nupkg
+*.snk
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# ROMs
+*.zip
+
+# Core DLLs
+*.dll
+
+# Runtime state files
+lastrom.txt
+system/
+saves/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# MelonLoader/build props
+Directory.Build.props
