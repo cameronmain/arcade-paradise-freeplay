@@ -8,7 +8,6 @@ namespace ArcadeParadiseFreePlayMod
 {
     public static class LibretroHost
     {
-        // ── Win32 raw keyboard input (bypasses Unity's Input system) ──
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
 
@@ -37,10 +36,45 @@ namespace ArcadeParadiseFreePlayMod
             { KeyCode.F1, 0x70 }, { KeyCode.F5, 0x74 }, { KeyCode.F9, 0x78 },
         };
 
-        /// <summary>Check if a key is held down via Win32 (bypasses Unity Input).</summary>
         private static bool IsWinKeyDown(KeyCode key)
         {
             return _vkMap.TryGetValue(key, out int vk) && (GetAsyncKeyState(vk) & 0x8000) != 0;
+        }
+
+        // Cached input state from the keyboard and controller
+        private static bool _inpUp, _inpDown, _inpLeft, _inpRight;
+        private static bool _inpStart, _inpCoin, _inpBtnA, _inpBtnB;
+
+        public static void PollInput()
+        {
+            bool kbUp    = IsWinKeyDown(KeyCode.UpArrow)    || IsWinKeyDown(KeyCode.W);
+            bool kbDown  = IsWinKeyDown(KeyCode.DownArrow)  || IsWinKeyDown(KeyCode.S);
+            bool kbLeft  = IsWinKeyDown(KeyCode.LeftArrow)  || IsWinKeyDown(KeyCode.A);
+            bool kbRight = IsWinKeyDown(KeyCode.RightArrow) || IsWinKeyDown(KeyCode.D);
+            bool kbStart = IsWinKeyDown(KeyCode.Return)     || IsWinKeyDown(KeyCode.Alpha1);
+            bool kbCoin  = IsWinKeyDown(KeyCode.Alpha5);
+            bool kbA     = IsWinKeyDown(KeyCode.LeftAlt)    || IsWinKeyDown(KeyCode.X);
+            bool kbB     = IsWinKeyDown(KeyCode.LeftControl)|| IsWinKeyDown(KeyCode.Z);
+
+            float axisH = Input.GetAxis("Horizontal");
+            float axisV = Input.GetAxis("Vertical");
+            bool padUp    = axisV > 0.5f;
+            bool padDown  = axisV < -0.5f;
+            bool padLeft  = axisH < -0.5f;
+            bool padRight = axisH > 0.5f;
+            bool padStart = Input.GetKey(KeyCode.JoystickButton7);
+            bool padCoin  = Input.GetKey(KeyCode.JoystickButton6);
+            bool padA     = Input.GetKey(KeyCode.JoystickButton1);
+            bool padB     = Input.GetKey(KeyCode.JoystickButton0);
+
+            _inpUp    = kbUp    || padUp;
+            _inpDown  = kbDown  || padDown;
+            _inpLeft  = kbLeft  || padLeft;
+            _inpRight = kbRight || padRight;
+            _inpStart = kbStart || padStart;
+            _inpCoin  = kbCoin  || padCoin;
+            _inpBtnA  = kbA     || padA;
+            _inpBtnB  = kbB     || padB;
         }
 
         private static IntPtr _coreHandle;
@@ -62,12 +96,12 @@ namespace ArcadeParadiseFreePlayMod
         private static string _saveDir;
         private static string _contentDir;
         private static int _frameCount;
+        private static bool _coreInitialized;
+        private static bool _gameLoaded;
 
-        private static int _pollCount;
         private static HashSet<uint> _seenEnvCommands = new HashSet<uint>();
-
         private static RetroKeyboardEventDelegate _keyboardCallback;
-        private static readonly Dictionary<uint, bool> _prevKeyState = new Dictionary<uint, bool>();
+        private static bool _prevCtrl, _prevAlt;
 
         private static readonly Dictionary<string, IntPtr> _variableValues = new Dictionary<string, IntPtr>();
         private static readonly HashSet<string> _seenVarKeys = new HashSet<string>();
@@ -127,7 +161,12 @@ namespace ArcadeParadiseFreePlayMod
         public const uint RETRO_MEMORY_VIDEO_RAM = 2;
         public const uint RETRO_PIXEL_FORMAT_RGB565 = 0;
         public const uint RETRO_PIXEL_FORMAT_XRGB8888 = 1;
-        public const uint RETRO_DEVICE_JOYPAD = 0;
+        // Libretro device values: JOYPAD=1, KEYBOARD=3, ANALOG=5.
+        // JOYPAD=0 is RETRO_DEVICE_NONE and is not a controller device
+        public const uint RETRO_DEVICE_JOYPAD = 1;
+        public const uint RETRO_DEVICE_KEYBOARD = 3;
+        public const uint RETRO_DEVICE_ANALOG = 5;
+        public const uint RETRO_DEVICE_ID_JOYPAD_MASK = 256;
         public const uint RETRO_DEVICE_ID_JOYPAD_B = 0;
         public const uint RETRO_DEVICE_ID_JOYPAD_Y = 1;
         public const uint RETRO_DEVICE_ID_JOYPAD_SELECT = 2;
@@ -280,10 +319,11 @@ namespace ArcadeParadiseFreePlayMod
             _retro_set_input_state(Marshal.GetFunctionPointerForDelegate(_inputStateDelegate));
 
             _retro_init();
+            _coreInitialized = true;
 
-            // Force port 0 to joystick device so the core uses our controlled
-            // joystick mappings instead of its internal keyboard layout.
+            // inform core that port 0 contains a standard RetroPad
             _retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+            Console.WriteLine("[LibretroHost] Port 0 configured as JOYPAD (device 1)");
 
             var sysInfo = new RetroSystemInfo();
             _retro_get_system_info(ref sysInfo);
@@ -303,6 +343,7 @@ namespace ArcadeParadiseFreePlayMod
             gameInfo.size = UIntPtr.Zero;
             gameInfo.meta = IntPtr.Zero;
 
+            _gameLoaded = false;
             bool ok = _retro_load_game(ref gameInfo);
             Marshal.FreeHGlobal(pathPtr);
 
@@ -328,6 +369,7 @@ namespace ArcadeParadiseFreePlayMod
             _framebuffer = new uint[rawSize];
             _rotatedBuffer = _fbPortrait ? new uint[rawSize] : null;
             _frameCount = 0;
+            _gameLoaded = true;
             return true;
         }
 
@@ -344,14 +386,12 @@ namespace ArcadeParadiseFreePlayMod
             if (!_fbPortrait)
                 return _framebuffer;
 
-            // rotate 90 CW into _rotatedBuffer so the caller always gets landscape-oriented data. Uses the same rotation that RetroArch applies to vertical arcade games
             int srcW = _fbWidth, srcH = _fbHeight;
             for (int y = 0; y < srcH; y++)
             {
                 for (int x = 0; x < srcW; x++)
                 {
                     uint px = _framebuffer[y * srcW + x];
-                    // 90 CW: src(x,y) → dst(srcH-1-y, x)
                     int dstX = srcH - 1 - y;
                     int dstY = x;
                     _rotatedBuffer[dstY * srcH + dstX] = px;
@@ -363,15 +403,50 @@ namespace ArcadeParadiseFreePlayMod
 
         public static void Shutdown()
         {
-            _retro_unload_game();
-            _retro_deinit();
-            if (_coreHandle != IntPtr.Zero)
+            // The manager may call Shutdown more than once during a failed load
+            // or while changing content. Do not invoke delegates after the native
+            // library has been released.
+            if (_coreHandle == IntPtr.Zero)
             {
-                NativeLibrary.Free(_coreHandle);
-                _coreHandle = IntPtr.Zero;
+                _gameLoaded = false;
+                _coreInitialized = false;
+                return;
             }
+
+            if (_gameLoaded && _retro_unload_game != null)
+                _retro_unload_game();
+            _gameLoaded = false;
+
+            if (_coreInitialized && _retro_deinit != null)
+                _retro_deinit();
+            _coreInitialized = false;
+
+            IntPtr handle = _coreHandle;
+            _coreHandle = IntPtr.Zero;
+            NativeLibrary.Free(handle);
+
+            _keyboardCallback = null;
+            _retro_api_version = null;
+            _retro_init = null;
+            _retro_deinit = null;
+            _retro_set_environment = null;
+            _retro_set_video_refresh = null;
+            _retro_set_audio_sample = null;
+            _retro_set_audio_sample_batch = null;
+            _retro_set_input_poll = null;
+            _retro_set_input_state = null;
+            _retro_set_controller_port_device = null;
+            _retro_get_system_info = null;
+            _retro_get_system_av_info = null;
+            _retro_load_game = null;
+            _retro_run = null;
+            _retro_unload_game = null;
+            _retro_get_memory_data = null;
+            _retro_get_memory_size = null;
+
             _fbPortrait = false;
             _rotatedBuffer = null;
+            _framebuffer = null;
             Console.WriteLine("[LibretroHost] Core unloaded");
         }
 
@@ -382,12 +457,11 @@ namespace ArcadeParadiseFreePlayMod
         public static double TargetFps { get; private set; } = 60.0;
         public static double FrameTimeSeconds => 1.0 / TargetFps;
 
-        /// <summary>True if a core is loaded and ready to run frames.</summary>
         public static bool IsLoaded => _coreHandle != IntPtr.Zero;
 
         private static bool EnvironmentCallback(uint cmd, IntPtr data)
         {
-            if (_seenEnvCommands.Count < 30 && _seenEnvCommands.Add(cmd))
+            if (_seenEnvCommands.Count < 40 && _seenEnvCommands.Add(cmd))
                 Console.WriteLine($"[LibretroHost] EnvCmd: {cmd}");
 
             switch (cmd)
@@ -426,6 +500,16 @@ namespace ArcadeParadiseFreePlayMod
                     return true;
 
                 case RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK:
+                {
+                    var cb = (RetroKeyboardCallback)Marshal.PtrToStructure(data, typeof(RetroKeyboardCallback));
+                    _keyboardCallback = cb.callback != IntPtr.Zero
+                        ? Marshal.GetDelegateForFunctionPointer<RetroKeyboardEventDelegate>(cb.callback)
+                        : null;
+                    Console.WriteLine($"[LibretroHost] Keyboard callback: {(_keyboardCallback != null)}");
+                    return _keyboardCallback != null;
+                }
+
+                case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
                     return false;
 
                 case RETRO_ENVIRONMENT_GET_VARIABLE:
@@ -451,9 +535,6 @@ namespace ArcadeParadiseFreePlayMod
                     }
                     return false;
 
-                case RETRO_ENVIRONMENT_GET_LED_INTERFACE:
-                case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
-                case RETRO_ENVIRONMENT_GET_CORE_ASSETS_DIRECTORY:
                 default:
                     return false;
             }
@@ -509,68 +590,73 @@ namespace ArcadeParadiseFreePlayMod
 
         private static void InputPollCallback()
         {
-            _pollCount++;
             if (_keyboardCallback == null) return;
 
-            foreach (var kvp in _keyMap)
-            {
-                uint retroKey = kvp.Key;
-                KeyCode unityKey = kvp.Value;
-                bool pressed = IsWinKeyDown(unityKey);
-                _prevKeyState.TryGetValue(retroKey, out bool wasPressed);
-
-                if (pressed != wasPressed)
-                {
-                    _keyboardCallback(pressed, retroKey, 0, 0);
-                    _prevKeyState[retroKey] = pressed;
-                }
-            }
+            // Forward the two cached action states through the keyboard
+            // callback using the configured virtual-key values.
+            // VK_LCONTROL=0x11 and VK_LMENU=0x12 are the Windows virtual-key
+            // codes used by this input path.
+            bool ctrl = _inpBtnB, alt = _inpBtnA;
+            if (ctrl != _prevCtrl) { _keyboardCallback(ctrl, 0x11, 0, 0); _prevCtrl = ctrl; }
+            if (alt  != _prevAlt)  { _keyboardCallback(alt,  0x12, 0, 0); _prevAlt  = alt;  }
         }
 
         private static short InputStateCallback(uint port, uint device, uint index, uint id)
         {
             short result = 0;
 
-            if (device == 1)
+            if (device == RETRO_DEVICE_JOYPAD && port == 0)
             {
-                if (_keyMap.TryGetValue(id, out KeyCode key))
+                // RETRO_DEVICE_ID_JOYPAD_MASK is a pressed-button bitmask,
+                // not a boolean capability flag. The second cached action is
+                // exposed through more than one button slot for compatibility
+                // with cores that use different layouts.
+                if (id == RETRO_DEVICE_ID_JOYPAD_MASK)
                 {
-                    result = IsWinKeyDown(key) ? (short)1 : (short)0;
+                    int mask = 0;
+                    if (_inpBtnB)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_B;
+                    if (_inpBtnA)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_Y;
+                    if (_inpCoin)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_SELECT;
+                    if (_inpStart) mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_START;
+                    if (_inpUp)    mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_UP;
+                    if (_inpDown)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_DOWN;
+                    if (_inpLeft)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_LEFT;
+                    if (_inpRight) mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_RIGHT;
+                    if (_inpBtnA)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_A;
+                    result = unchecked((short)mask);
                 }
-                else if (port == 0)
+                else
                 {
-                    // Neo Geo / arcade keyboard layout (P1 = 0-3, P2 = 4-7, coin/start = 10-11)
                     result = id switch
                     {
-                        // FB Alpha keyboard device
-                        0 => IsWinKeyDown(KeyCode.Return) ? (short)1 : (short)0,
-                        1 => (IsWinKeyDown(KeyCode.DownArrow) || IsWinKeyDown(KeyCode.S)) ? (short)1 : (short)0,
-                        2 => IsWinKeyDown(KeyCode.Alpha5) ? (short)1 : (short)0,      // insert coin
-                        3 => IsWinKeyDown(KeyCode.Return) ? (short)1 : (short)0,
-                        4 => (IsWinKeyDown(KeyCode.UpArrow) || IsWinKeyDown(KeyCode.W)) ? (short)1 : (short)0,
-                        5 => (IsWinKeyDown(KeyCode.DownArrow) || IsWinKeyDown(KeyCode.S)) ? (short)1 : (short)0,
-                        6 => (IsWinKeyDown(KeyCode.LeftArrow) || IsWinKeyDown(KeyCode.A)) ? (short)1 : (short)0,
-                        7 => (IsWinKeyDown(KeyCode.RightArrow) || IsWinKeyDown(KeyCode.D)) ? (short)1 : (short)0,
-                        10 => IsWinKeyDown(KeyCode.Alpha5) ? (short)1 : (short)0,
-                        11 => IsWinKeyDown(KeyCode.Alpha1) ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_B => _inpBtnB ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_Y => _inpBtnA ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_SELECT => _inpCoin ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_START => _inpStart ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_UP => _inpUp ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_DOWN => _inpDown ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_LEFT => _inpLeft ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_RIGHT => _inpRight ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_A => _inpBtnA ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_X => 0,
                         _ => 0
                     };
                 }
             }
-            else if (device == 0 && port == 0)
+            else if (device == RETRO_DEVICE_KEYBOARD)
             {
-                result = id switch
+                // Physical keyboard queries use RETROK_* IDs. Controller state
+                // is handled by the RetroPad path.
+                result = _keyMap.TryGetValue(id, out KeyCode key) && IsWinKeyDown(key)
+                    ? (short)1 : (short)0;
+            }
+            else if (device == RETRO_DEVICE_ANALOG && port == 0)
+            {
+                // Analog input queries use this path for directional axes.
+                result = (int)id switch
                 {
-                    RETRO_DEVICE_ID_JOYPAD_UP => (IsWinKeyDown(KeyCode.UpArrow) || IsWinKeyDown(KeyCode.W)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_DOWN => (IsWinKeyDown(KeyCode.DownArrow) || IsWinKeyDown(KeyCode.S)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_LEFT => (IsWinKeyDown(KeyCode.LeftArrow) || IsWinKeyDown(KeyCode.A)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_RIGHT => (IsWinKeyDown(KeyCode.RightArrow) || IsWinKeyDown(KeyCode.D)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_START => (IsWinKeyDown(KeyCode.Return) || IsWinKeyDown(KeyCode.Alpha1)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_SELECT => (IsWinKeyDown(KeyCode.LeftShift) || IsWinKeyDown(KeyCode.Alpha5)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_A => (IsWinKeyDown(KeyCode.LeftAlt) || IsWinKeyDown(KeyCode.X)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_B => (IsWinKeyDown(KeyCode.LeftControl) || IsWinKeyDown(KeyCode.Z)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_X => 0,
-                    RETRO_DEVICE_ID_JOYPAD_Y => 0,
+                    0 => _inpLeft ? (short)-0x7FFF : _inpRight ? (short)0x7FFF : (short)0,
+                    1 => _inpUp ? (short)-0x7FFF : _inpDown ? (short)0x7FFF : (short)0,
                     _ => 0
                 };
             }

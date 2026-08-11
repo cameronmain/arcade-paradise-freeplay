@@ -204,8 +204,8 @@ namespace ArcadeParadiseFreePlayMod
                 MelonLogger.Warning("[EmulatorArcadeManager] Cabinet screen (m_Screen) not found");
             }
 
-            // ── Load libretro core with fallback ────────────────
-            // When core="auto", try each fallback until ROM loads
+            // ── Load the configured libretro core ─────────────────
+            // currently the same core is reused for every ROM during cycling
             bool loaded = TryLoadCore();
             if (!loaded)
             {
@@ -331,6 +331,9 @@ namespace ArcadeParadiseFreePlayMod
                 }
                 _cycleKeyWasDown = f9Down;
             }
+
+            // cache combined keyboard + controller input so callbacks running during retro_run() see fresh state
+            LibretroHost.PollInput();
 
             // frame pacing: run emulator frames at the cores target rate
             _emuFrameAccum += Time.unscaledDeltaTime;

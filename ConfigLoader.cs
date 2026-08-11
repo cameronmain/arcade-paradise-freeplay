@@ -141,7 +141,7 @@ namespace ArcadeParadiseFreePlayMod
         }
 
         /// <summary>
-        /// Auto-detect the best core by checking which DLLs are available.
+        /// Auto-detect the configured single core by checking whether its DLL is available.
         /// Returns the full path to the best available core DLL.
         /// </summary>
         private static string AutoDetectCore()
@@ -156,7 +156,7 @@ namespace ArcadeParadiseFreePlayMod
                 }
             }
 
-            // fallback to first core name (caller will handle missing file)
+            // return the configured core name with the caller handling any missing file
             string fallback = Path.Combine(FreePlayDir, _availableCores[0]);
             MelonLogger.Warning($"[ConfigLoader] No core DLL found, trying: {fallback}");
             return fallback;
