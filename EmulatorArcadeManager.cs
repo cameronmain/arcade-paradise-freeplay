@@ -20,6 +20,7 @@ namespace ArcadeParadiseFreePlayMod
         private bool _emuRunning;
         private bool _attractMode; // true = auto-started demo; skips camera swap
         private bool _initFailed; // prevents infinite retry when core/ROM can't load
+        private double _emuFrameAccum; // accumulated real time since last emulator frame
 
         // ── Cabinet screen ─────────────────────────────────────
         private Texture2D _screenTexture;
@@ -104,9 +105,11 @@ namespace ArcadeParadiseFreePlayMod
             // ── Load config (preferences only) + autoscan ROMs ──
             if (_corePath == null)
             {
-                var config = ConfigLoader.Load();
-                _corePath = config.core;
-                _systemDir = config.systemDir;
+                try
+                {
+                    var config = ConfigLoader.Load();
+                    _corePath = config.core;
+                    _systemDir = config.systemDir;
 
                 // always autoscan roms/ folder. Config only sets the starting game.
                 _romList = ConfigLoader.ScanRoms();
@@ -141,6 +144,13 @@ namespace ArcadeParadiseFreePlayMod
                     ? $"{_romList.Length} ROMs, starting with {Path.GetFileName(_romPath)}"
                     : Path.GetFileName(_romPath);
                 MelonLogger.Msg($"[EmulatorArcadeManager] Config: core={Path.GetFileName(_corePath)}, {romDesc}, system={_systemDir}");
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Error($"[EmulatorArcadeManager] Failed to load config: {ex.Message}");
+                    _initFailed = true;
+                    return false;
+                }
             }
 
             m_GameName = "Free Play";
@@ -322,17 +332,32 @@ namespace ArcadeParadiseFreePlayMod
                 _cycleKeyWasDown = f9Down;
             }
 
-            try
-            {
-                if (!LibretroHost.IsLoaded) { _emuRunning = false; return; }
-                LibretroHost.RunFrame();
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"[EmulatorArcadeManager] RunFrame error: {ex.Message}");
-                _emuRunning = false;
+            // frame pacing: run emulator frames at the cores target rate
+            _emuFrameAccum += Time.unscaledDeltaTime;
+            double frameTime = LibretroHost.FrameTimeSeconds;
+            if (_emuFrameAccum < frameTime)
                 return;
+
+            // use while (not if) to avoid drift/skip cycles that make input feel sticky & cap at 4 frames to prevent runaway fast-forward after alt-tab
+            int maxFrames = 4;
+            while (_emuFrameAccum >= frameTime && maxFrames-- > 0)
+            {
+                _emuFrameAccum -= frameTime;
+                try
+                {
+                    if (!LibretroHost.IsLoaded) { _emuRunning = false; return; }
+                    LibretroHost.RunFrame();
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Error($"[EmulatorArcadeManager] RunFrame error: {ex.Message}");
+                    _emuRunning = false;
+                    return;
+                }
             }
+            // prevent accumulator runaway after long pauses
+            if (_emuFrameAccum > frameTime * 4)
+                _emuFrameAccum = frameTime;
 
             if (_screenTexture != null && _unmanagedBuffer != IntPtr.Zero)
             {

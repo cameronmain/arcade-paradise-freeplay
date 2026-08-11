@@ -8,6 +8,41 @@ namespace ArcadeParadiseFreePlayMod
 {
     public static class LibretroHost
     {
+        // ── Win32 raw keyboard input (bypasses Unity's Input system) ──
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
+        private static readonly Dictionary<KeyCode, int> _vkMap = new Dictionary<KeyCode, int>
+        {
+            { KeyCode.UpArrow,    0x26 }, { KeyCode.DownArrow,  0x28 },
+            { KeyCode.LeftArrow,  0x25 }, { KeyCode.RightArrow, 0x27 },
+            { KeyCode.Return,     0x0D }, { KeyCode.LeftShift,  0xA0 },
+            { KeyCode.LeftControl,0x11 }, { KeyCode.LeftAlt,    0x12 },
+            { KeyCode.Space,      0x20 }, { KeyCode.Escape,     0x1B },
+            { KeyCode.Tab,        0x09 }, { KeyCode.Backspace,  0x08 },
+            { KeyCode.Delete,     0x2E },
+            { KeyCode.Alpha0, 0x30 }, { KeyCode.Alpha1, 0x31 }, { KeyCode.Alpha2, 0x32 },
+            { KeyCode.Alpha3, 0x33 }, { KeyCode.Alpha4, 0x34 }, { KeyCode.Alpha5, 0x35 },
+            { KeyCode.Alpha6, 0x36 }, { KeyCode.Alpha7, 0x37 }, { KeyCode.Alpha8, 0x38 },
+            { KeyCode.Alpha9, 0x39 },
+            { KeyCode.A, 0x41 }, { KeyCode.B, 0x42 }, { KeyCode.C, 0x43 },
+            { KeyCode.D, 0x44 }, { KeyCode.E, 0x45 }, { KeyCode.F, 0x46 },
+            { KeyCode.G, 0x47 }, { KeyCode.H, 0x48 }, { KeyCode.I, 0x49 },
+            { KeyCode.J, 0x4A }, { KeyCode.K, 0x4B }, { KeyCode.L, 0x4C },
+            { KeyCode.M, 0x4D }, { KeyCode.N, 0x4E }, { KeyCode.O, 0x4F },
+            { KeyCode.P, 0x50 }, { KeyCode.Q, 0x51 }, { KeyCode.R, 0x52 },
+            { KeyCode.S, 0x53 }, { KeyCode.T, 0x54 }, { KeyCode.U, 0x55 },
+            { KeyCode.V, 0x56 }, { KeyCode.W, 0x57 }, { KeyCode.X, 0x58 },
+            { KeyCode.Y, 0x59 }, { KeyCode.Z, 0x5A },
+            { KeyCode.F1, 0x70 }, { KeyCode.F5, 0x74 }, { KeyCode.F9, 0x78 },
+        };
+
+        /// <summary>Check if a key is held down via Win32 (bypasses Unity Input).</summary>
+        private static bool IsWinKeyDown(KeyCode key)
+        {
+            return _vkMap.TryGetValue(key, out int vk) && (GetAsyncKeyState(vk) & 0x8000) != 0;
+        }
+
         private static IntPtr _coreHandle;
         private static string _corePath;
 
@@ -29,12 +64,6 @@ namespace ArcadeParadiseFreePlayMod
         private static int _frameCount;
 
         private static int _pollCount;
-        private static int _inputQueryCount;
-        private static int _kbdQueryCount;
-        private static int _joyQueryCount;
-        private static int _otherQueryCount;
-        private static int _inputNonZeroCount;
-        private static HashSet<uint> _loggedRetroKeys = new HashSet<uint>();
         private static HashSet<uint> _seenEnvCommands = new HashSet<uint>();
 
         private static RetroKeyboardEventDelegate _keyboardCallback;
@@ -53,19 +82,10 @@ namespace ArcadeParadiseFreePlayMod
             { 127,   KeyCode.Delete },
             { 273,   KeyCode.UpArrow },
             { 274,   KeyCode.DownArrow },
-            { 275,   KeyCode.RightArrow },
-            { 276,   KeyCode.LeftArrow },
+            { 275,   KeyCode.LeftArrow },
+            { 276,   KeyCode.RightArrow },
             { 49,    KeyCode.Alpha1 },
             { 53,    KeyCode.Alpha5 },
-            { 97,  KeyCode.A }, { 98,  KeyCode.B }, { 99,  KeyCode.C },
-            { 100, KeyCode.D }, { 101, KeyCode.E }, { 102, KeyCode.F },
-            { 103, KeyCode.G }, { 104, KeyCode.H }, { 105, KeyCode.I },
-            { 106, KeyCode.J }, { 107, KeyCode.K }, { 108, KeyCode.L },
-            { 109, KeyCode.M }, { 110, KeyCode.N }, { 111, KeyCode.O },
-            { 112, KeyCode.P }, { 113, KeyCode.Q }, { 114, KeyCode.R },
-            { 115, KeyCode.S }, { 116, KeyCode.T }, { 117, KeyCode.U },
-            { 118, KeyCode.V }, { 119, KeyCode.W }, { 120, KeyCode.X },
-            { 121, KeyCode.Y }, { 122, KeyCode.Z },
         };
 
         private delegate uint RetroApiVersionDelegate();
@@ -261,6 +281,10 @@ namespace ArcadeParadiseFreePlayMod
 
             _retro_init();
 
+            // Force port 0 to joystick device so the core uses our controlled
+            // joystick mappings instead of its internal keyboard layout.
+            _retro_set_controller_port_device(0, RETRO_DEVICE_JOYPAD);
+
             var sysInfo = new RetroSystemInfo();
             _retro_get_system_info(ref sysInfo);
             string name = sysInfo.library_name != IntPtr.Zero ? Marshal.PtrToStringAnsi(sysInfo.library_name) : "?";
@@ -294,6 +318,7 @@ namespace ArcadeParadiseFreePlayMod
             _fbHeight = (int)avInfo.geometry.base_height;
             _fbPitch = _fbWidth;
             _fbPortrait = _fbHeight > _fbWidth;
+            TargetFps = avInfo.timing.fps > 0 ? avInfo.timing.fps : 60.0;
 
             Console.WriteLine($"[LibretroHost] Game loaded: {Path.GetFileName(romPath)}");
             Console.WriteLine($"[LibretroHost]   Resolution: {_fbWidth}x{_fbHeight} @ {avInfo.timing.fps:F1} fps{(_fbPortrait ? " (portrait, will rotate)" : "")}");
@@ -354,6 +379,8 @@ namespace ArcadeParadiseFreePlayMod
         public static int FramebufferHeight => _fbPortrait ? _fbWidth : _fbHeight;
         public static uint PixelFormat => _pixelFormat;
         public static int FrameCount => _frameCount;
+        public static double TargetFps { get; private set; } = 60.0;
+        public static double FrameTimeSeconds => 1.0 / TargetFps;
 
         /// <summary>True if a core is loaded and ready to run frames.</summary>
         public static bool IsLoaded => _coreHandle != IntPtr.Zero;
@@ -489,7 +516,7 @@ namespace ArcadeParadiseFreePlayMod
             {
                 uint retroKey = kvp.Key;
                 KeyCode unityKey = kvp.Value;
-                bool pressed = Input.GetKey(unityKey);
+                bool pressed = IsWinKeyDown(unityKey);
                 _prevKeyState.TryGetValue(retroKey, out bool wasPressed);
 
                 if (pressed != wasPressed)
@@ -502,55 +529,53 @@ namespace ArcadeParadiseFreePlayMod
 
         private static short InputStateCallback(uint port, uint device, uint index, uint id)
         {
-            _inputQueryCount++;
-            if (device == 1) _kbdQueryCount++;
-            else if (device == 0) _joyQueryCount++;
-            else _otherQueryCount++;
+            short result = 0;
 
             if (device == 1)
             {
                 if (_keyMap.TryGetValue(id, out KeyCode key))
-                    return Input.GetKey(key) ? (short)1 : (short)0;
-
-                if (port == 0)
                 {
-                    return id switch
+                    result = IsWinKeyDown(key) ? (short)1 : (short)0;
+                }
+                else if (port == 0)
+                {
+                    // Neo Geo / arcade keyboard layout (P1 = 0-3, P2 = 4-7, coin/start = 10-11)
+                    result = id switch
                     {
-                        0 => Input.GetKey(KeyCode.Return) ? (short)1 : (short)0,
-                        1 => Input.GetKey(KeyCode.DownArrow) ? (short)1 : (short)0,
-                        2 => Input.GetKey(KeyCode.LeftArrow) ? (short)1 : (short)0,
-                        3 => Input.GetKey(KeyCode.Return) ? (short)1 : (short)0,
-                        4 => Input.GetKey(KeyCode.UpArrow) ? (short)1 : (short)0,
-                        5 => Input.GetKey(KeyCode.DownArrow) ? (short)1 : (short)0,
-                        6 => Input.GetKey(KeyCode.RightArrow) ? (short)1 : (short)0,
-                        7 => Input.GetKey(KeyCode.UpArrow) ? (short)1 : (short)0,
-                        10 => Input.GetKey(KeyCode.Alpha5) ? (short)1 : (short)0,
-                        11 => Input.GetKey(KeyCode.Alpha1) ? (short)1 : (short)0,
+                        // FB Alpha keyboard device
+                        0 => IsWinKeyDown(KeyCode.Return) ? (short)1 : (short)0,
+                        1 => (IsWinKeyDown(KeyCode.DownArrow) || IsWinKeyDown(KeyCode.S)) ? (short)1 : (short)0,
+                        2 => IsWinKeyDown(KeyCode.Alpha5) ? (short)1 : (short)0,      // insert coin
+                        3 => IsWinKeyDown(KeyCode.Return) ? (short)1 : (short)0,
+                        4 => (IsWinKeyDown(KeyCode.UpArrow) || IsWinKeyDown(KeyCode.W)) ? (short)1 : (short)0,
+                        5 => (IsWinKeyDown(KeyCode.DownArrow) || IsWinKeyDown(KeyCode.S)) ? (short)1 : (short)0,
+                        6 => (IsWinKeyDown(KeyCode.LeftArrow) || IsWinKeyDown(KeyCode.A)) ? (short)1 : (short)0,
+                        7 => (IsWinKeyDown(KeyCode.RightArrow) || IsWinKeyDown(KeyCode.D)) ? (short)1 : (short)0,
+                        10 => IsWinKeyDown(KeyCode.Alpha5) ? (short)1 : (short)0,
+                        11 => IsWinKeyDown(KeyCode.Alpha1) ? (short)1 : (short)0,
                         _ => 0
                     };
                 }
-                return 0;
             }
-
-            if (device == 0 && port == 0)
+            else if (device == 0 && port == 0)
             {
-                return id switch
+                result = id switch
                 {
-                    RETRO_DEVICE_ID_JOYPAD_UP => Input.GetKey(KeyCode.UpArrow) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_DOWN => Input.GetKey(KeyCode.DownArrow) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_LEFT => Input.GetKey(KeyCode.LeftArrow) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_RIGHT => Input.GetKey(KeyCode.RightArrow) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_START => (Input.GetKey(KeyCode.Return) || Input.GetKey(KeyCode.Alpha1)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_SELECT => (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.Alpha5)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_A => (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.X)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_B => (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.Z)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_X => (Input.GetKey(KeyCode.S)) ? (short)1 : (short)0,
-                    RETRO_DEVICE_ID_JOYPAD_Y => (Input.GetKey(KeyCode.A)) ? (short)1 : (short)0,
+                    RETRO_DEVICE_ID_JOYPAD_UP => (IsWinKeyDown(KeyCode.UpArrow) || IsWinKeyDown(KeyCode.W)) ? (short)1 : (short)0,
+                    RETRO_DEVICE_ID_JOYPAD_DOWN => (IsWinKeyDown(KeyCode.DownArrow) || IsWinKeyDown(KeyCode.S)) ? (short)1 : (short)0,
+                    RETRO_DEVICE_ID_JOYPAD_LEFT => (IsWinKeyDown(KeyCode.LeftArrow) || IsWinKeyDown(KeyCode.A)) ? (short)1 : (short)0,
+                    RETRO_DEVICE_ID_JOYPAD_RIGHT => (IsWinKeyDown(KeyCode.RightArrow) || IsWinKeyDown(KeyCode.D)) ? (short)1 : (short)0,
+                    RETRO_DEVICE_ID_JOYPAD_START => (IsWinKeyDown(KeyCode.Return) || IsWinKeyDown(KeyCode.Alpha1)) ? (short)1 : (short)0,
+                    RETRO_DEVICE_ID_JOYPAD_SELECT => (IsWinKeyDown(KeyCode.LeftShift) || IsWinKeyDown(KeyCode.Alpha5)) ? (short)1 : (short)0,
+                    RETRO_DEVICE_ID_JOYPAD_A => (IsWinKeyDown(KeyCode.LeftAlt) || IsWinKeyDown(KeyCode.X)) ? (short)1 : (short)0,
+                    RETRO_DEVICE_ID_JOYPAD_B => (IsWinKeyDown(KeyCode.LeftControl) || IsWinKeyDown(KeyCode.Z)) ? (short)1 : (short)0,
+                    RETRO_DEVICE_ID_JOYPAD_X => 0,
+                    RETRO_DEVICE_ID_JOYPAD_Y => 0,
                     _ => 0
                 };
             }
 
-            return 0;
+            return result;
         }
 
         private static T GetDelegate<T>(string name) where T : Delegate
