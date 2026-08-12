@@ -40,10 +40,16 @@ namespace ArcadeParadiseFreePlayMod
         private int _currentRomIndex;      // index into _romList
 
         // ── Cabinet ROM browser ────────────────────────────────
+        private const float RomBrowserErrorDisplaySeconds = 2.5f;
         private bool _romBrowserOpen;
         private bool _romBrowserReturnToPlay;
         private int _romBrowserIndex;
         private float _romBrowserRepeatTimer;
+        private float _romBrowserErrorTimer;
+        private string _lastLoadError;
+        private bool _fatalErrorVisible;
+        private string _romBrowserError;
+        private string _romBrowserErrorReason;
 
         static EmulatorArcadeManager()
         {
@@ -112,6 +118,7 @@ namespace ArcadeParadiseFreePlayMod
         public override unsafe bool InitalizeGame()
         {
             MelonLogger.Msg("[EmulatorArcadeManager] InitalizeGame() called");
+            PrepareCabinetScreen();
 
             // ── Load config (preferences only) + autoscan ROMs ──
             if (_corePath == null)
@@ -128,8 +135,10 @@ namespace ArcadeParadiseFreePlayMod
                 // fallback: if roms/ is empty, try wjammers.zip in the FreePlay folder
                 if (_romList.Length == 0)
                 {
+                    _lastLoadError = "NO ROMS FOUND";
                     MelonLogger.Error("[EmulatorArcadeManager] No ROMs found in roms/");
                     _initFailed = true;
+                    ShowFatalLoadError(_lastLoadError, null);
                     return false;
                 }
 
@@ -158,8 +167,10 @@ namespace ArcadeParadiseFreePlayMod
                 }
                 catch (Exception ex)
                 {
+                    _lastLoadError = "CONFIG LOAD FAILED";
                     MelonLogger.Error($"[EmulatorArcadeManager] Failed to load config: {ex.Message}");
                     _initFailed = true;
+                    ShowFatalLoadError(_lastLoadError, null);
                     return false;
                 }
             }
@@ -183,44 +194,13 @@ namespace ArcadeParadiseFreePlayMod
             }
             Players = new Il2CppReferenceArray<InputManager.InputPlayer>(0);
 
-            // ── Cabinet screen setup ───────────────────────────
-            _machine = GetComponent<Il2CppRAT.Arcade.ArcadeMachine>();
-            if (_machine != null && _machine.m_Screen != null)
-            {
-                int w = 640, h = 480;
-                _screenW = w;
-                _screenH = h;
-                _screenTexture = new Texture2D(w, h, TextureFormat.RGB24, false);
-                _screenTexture.filterMode = FilterMode.Point;
-                _screenByteCount = w * h * 3;
-                if (_unmanagedBuffer != IntPtr.Zero)
-                    Marshal.FreeHGlobal(_unmanagedBuffer);
-                _unmanagedBuffer = Marshal.AllocHGlobal(_screenByteCount);
-
-                var shader = Shader.Find("Unlit/Texture");
-                if (shader != null)
-                {
-                    _screenMaterial = new Material(shader);
-                    _screenMaterial.mainTexture = _screenTexture;
-                }
-                else
-                {
-                    MelonLogger.Error("[EmulatorArcadeManager] Shader 'Unlit/Texture' not found");
-                }
-
-                MelonLogger.Msg($"[EmulatorArcadeManager] Texture2D {w}x{h} prepared");
-            }
-            else
-            {
-                MelonLogger.Warning("[EmulatorArcadeManager] Cabinet screen (m_Screen) not found");
-            }
-
             // ── Load the configured libretro core ─────────────────
             // the configured core is reused when selecting another ROM
             bool loaded = TryLoadCore();
             if (!loaded)
             {
                 _initFailed = true;
+                ShowFatalLoadError(_lastLoadError, _romPath);
                 return false;
             }
 
@@ -230,16 +210,34 @@ namespace ArcadeParadiseFreePlayMod
 
         private bool TryLoadCore()
         {
+            try
+            {
+                return TryLoadCoreInternal();
+            }
+            catch (Exception ex)
+            {
+                _lastLoadError = "LOAD EXCEPTION";
+                MelonLogger.Error($"[EmulatorArcadeManager] Unexpected load error: {ex.Message}");
+                try { LibretroHost.Shutdown(); } catch { }
+                return false;
+            }
+        }
+
+        private bool TryLoadCoreInternal()
+        {
+            _lastLoadError = null;
             MelonLogger.Msg($"[EmulatorArcadeManager] Loading core: {Path.GetFileName(_corePath)}");
 
             if (!File.Exists(_corePath))
             {
+                _lastLoadError = "CORE NOT FOUND";
                 MelonLogger.Error($"[EmulatorArcadeManager] Core DLL not found: {_corePath}");
                 return false;
             }
 
             if (!LibretroHost.LoadCore(_corePath))
             {
+                _lastLoadError = "CORE LOAD FAILED";
                 MelonLogger.Error($"[EmulatorArcadeManager] Failed to load core");
                 return false;
             }
@@ -251,6 +249,7 @@ namespace ArcadeParadiseFreePlayMod
 
             if (!File.Exists(_romPath))
             {
+                _lastLoadError = "ROM FILE NOT FOUND";
                 MelonLogger.Error($"[EmulatorArcadeManager] ROM not found: {_romPath}");
                 LibretroHost.Shutdown();
                 return false;
@@ -258,6 +257,7 @@ namespace ArcadeParadiseFreePlayMod
 
             if (!LibretroHost.LoadGame(_romPath))
             {
+                _lastLoadError = "ROM REJECTED";
                 MelonLogger.Error($"[EmulatorArcadeManager] ROM rejected by {Path.GetFileName(_corePath)}");
                 LibretroHost.Shutdown();
                 return false;
@@ -334,6 +334,9 @@ namespace ArcadeParadiseFreePlayMod
                     LibretroHost.SetAudioPlayMode(false);
                     MelonLogger.Warning("[EmulatorArcadeManager] ROM browser closed because emulation stopped");
                 }
+
+                if (_fatalErrorVisible)
+                    ReApplyScreenMaterial();
                 return;
             }
 
@@ -439,6 +442,8 @@ namespace ArcadeParadiseFreePlayMod
             _romBrowserReturnToPlay = returnToPlay;
             _romBrowserIndex = Mathf.Clamp(_currentRomIndex, 0, _romList.Length - 1);
             _romBrowserRepeatTimer = 0f;
+            _romBrowserError = null;
+            _romBrowserErrorReason = null;
             LibretroHost.SetAudioPlayMode(false);
             ReApplyScreenMaterial();
             DrawRomBrowserScreen();
@@ -449,6 +454,35 @@ namespace ArcadeParadiseFreePlayMod
         {
             if (_romList == null || _romList.Length == 0)
                 return;
+
+            if (!string.IsNullOrEmpty(_romBrowserError))
+            {
+                _romBrowserErrorTimer -= Time.unscaledDeltaTime;
+                bool dismissError = UnityEngine.Input.GetKeyDown(KeyCode.UpArrow) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.DownArrow) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.W) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.S) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.Return) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.Space) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.Escape) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.Backspace) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton0) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton1) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton4) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton5) ||
+                                    UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton7) ||
+                                    Mathf.Abs(UnityEngine.Input.GetAxisRaw("Vertical")) > 0.5f;
+
+                if (_romBrowserErrorTimer <= 0f || dismissError)
+                {
+                    _romBrowserError = null;
+                    _romBrowserErrorReason = null;
+                    _romBrowserErrorTimer = 0f;
+                    _romBrowserRepeatTimer = 0.16f;
+                    DrawRomBrowserScreen();
+                }
+                return;
+            }
 
             bool moved = false;
             bool up = UnityEngine.Input.GetKeyDown(KeyCode.UpArrow) ||
@@ -481,7 +515,11 @@ namespace ArcadeParadiseFreePlayMod
             }
 
             if (moved)
+            {
+                _romBrowserError = null;
+                _romBrowserErrorReason = null;
                 DrawRomBrowserScreen();
+            }
 
             bool confirm = UnityEngine.Input.GetKeyDown(KeyCode.Return) ||
                            UnityEngine.Input.GetKeyDown(KeyCode.Space) ||
@@ -513,6 +551,7 @@ namespace ArcadeParadiseFreePlayMod
                     _romBrowserOpen = false;
                     _attractMode = true;
                     LibretroHost.SetAudioPlayMode(false);
+                    ShowFatalLoadError(_romBrowserErrorReason ?? "ROM LOAD FAILED", _romBrowserError);
                     MelonLogger.Error("[EmulatorArcadeManager] ROM browser closed after unrecoverable load failure");
                 }
                 else
@@ -524,6 +563,8 @@ namespace ArcadeParadiseFreePlayMod
             }
 
             _romBrowserOpen = false;
+            _romBrowserError = null;
+            _romBrowserErrorReason = null;
 
             if (launch || returnToPlay)
             {
@@ -550,9 +591,10 @@ namespace ArcadeParadiseFreePlayMod
 
             int previousIndex = _currentRomIndex;
             string previousPath = _romPath;
+            string failedPath = _romList[index];
             LibretroHost.Shutdown();
             _currentRomIndex = index;
-            _romPath = _romList[index];
+            _romPath = failedPath;
 
             if (TryLoadCore())
             {
@@ -561,8 +603,13 @@ namespace ArcadeParadiseFreePlayMod
                 return true;
             }
 
+            string failedReason = _lastLoadError ?? "ROM LOAD FAILED";
             _currentRomIndex = previousIndex;
             _romPath = previousPath;
+            _romBrowserError = failedPath;
+            _romBrowserErrorReason = failedReason;
+            _romBrowserErrorTimer = RomBrowserErrorDisplaySeconds;
+
             if (!TryLoadCore())
             {
                 _emuRunning = false;
@@ -608,10 +655,103 @@ namespace ArcadeParadiseFreePlayMod
             }
 
             _initFailed = false;
+            _fatalErrorVisible = false;
             LibretroHost.Shutdown();
         }
 
         // ── Cabinet-screen ROM browser rendering ─────────────────
+
+        private void PrepareCabinetScreen()
+        {
+            _machine = GetComponent<Il2CppRAT.Arcade.ArcadeMachine>();
+            _fatalErrorVisible = false;
+
+            if (_unmanagedBuffer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(_unmanagedBuffer);
+                _unmanagedBuffer = IntPtr.Zero;
+            }
+            if (_screenMaterial != null)
+            {
+                UnityEngine.Object.Destroy(_screenMaterial);
+                _screenMaterial = null;
+            }
+            if (_screenTexture != null)
+            {
+                UnityEngine.Object.Destroy(_screenTexture);
+                _screenTexture = null;
+            }
+
+            if (_machine == null || _machine.m_Screen == null)
+            {
+                MelonLogger.Warning("[EmulatorArcadeManager] Cabinet screen (m_Screen) not found");
+                return;
+            }
+
+            const int width = 640;
+            const int height = 480;
+            _screenW = width;
+            _screenH = height;
+            _screenTexture = new Texture2D(width, height, TextureFormat.RGB24, false);
+            _screenTexture.filterMode = FilterMode.Point;
+            _screenByteCount = width * height * 3;
+            _unmanagedBuffer = Marshal.AllocHGlobal(_screenByteCount);
+
+            var shader = Shader.Find("Unlit/Texture");
+            if (shader == null)
+            {
+                MelonLogger.Error("[EmulatorArcadeManager] Shader 'Unlit/Texture' not found");
+                return;
+            }
+
+            _screenMaterial = new Material(shader);
+            _screenMaterial.mainTexture = _screenTexture;
+            MelonLogger.Msg($"[EmulatorArcadeManager] Texture2D {width}x{height} prepared");
+        }
+
+        private void ShowFatalLoadError(string reason, string failedPath)
+        {
+            _fatalErrorVisible = true;
+            _romBrowserOpen = false;
+            _romBrowserError = null;
+            _romBrowserErrorReason = null;
+            _emuRunning = false;
+            _attractMode = true;
+            LibretroHost.SetAudioPlayMode(false);
+            ReApplyScreenMaterial();
+            DrawFatalErrorScreen(reason, failedPath);
+        }
+
+        private unsafe void DrawFatalErrorScreen(string reason, string failedPath)
+        {
+            if (_screenTexture == null || _unmanagedBuffer == IntPtr.Zero || _screenW <= 0 || _screenH <= 0)
+                return;
+
+            int w = _screenW;
+            int h = _screenH;
+            byte* pixels = (byte*)_unmanagedBuffer.ToPointer();
+            FillBrowserRect(pixels, w, h, 0, 0, w, h, 18, 5, 8);
+            FillBrowserRect(pixels, w, h, 3, 3, w - 6, h - 6, 92, 25, 35);
+            FillBrowserRect(pixels, w, h, 5, 5, w - 10, h - 10, 18, 5, 8);
+
+            int scale = w >= 240 ? 2 : 1;
+            int margin = 8 * scale;
+            DrawBrowserText(pixels, w, h, "FREE PLAY", margin, 8, scale, 127, 219, 255);
+            DrawBrowserText(pixels, w, h, "ROM LOAD ERROR", margin, scale == 2 ? 38 : 28, 1, 255, 96, 96);
+            DrawBrowserText(pixels, w, h, "FAILED TO LOAD", margin, scale == 2 ? 52 : 40, 1, 235, 235, 240);
+
+            int maxChars = Mathf.Max(8, (w - margin * 2) / 6);
+            string filename = SanitiseBrowserText(
+                Path.GetFileNameWithoutExtension(failedPath ?? string.Empty), maxChars);
+            string error = SanitiseBrowserText(reason ?? "ROM LOAD FAILED", maxChars);
+            DrawBrowserText(pixels, w, h, filename, margin, scale == 2 ? 64 : 52, 1, 255, 220, 110);
+            DrawBrowserText(pixels, w, h, error, margin, scale == 2 ? 78 : 64, 1, 235, 235, 240);
+            DrawBrowserText(pixels, w, h, "CHECK ROM FILE", margin, scale == 2 ? 100 : 78, 1, 170, 183, 196);
+            DrawBrowserText(pixels, w, h, "RESTART GAME", margin, scale == 2 ? 114 : 90, 1, 170, 183, 196);
+
+            _screenTexture.LoadRawTextureData(_unmanagedBuffer, _screenByteCount);
+            _screenTexture.Apply(false);
+        }
 
         private unsafe void DrawRomBrowserScreen()
         {
@@ -626,10 +766,17 @@ namespace ArcadeParadiseFreePlayMod
 
             int scale = w >= 240 ? 2 : 1;
             int margin = 8 * scale;
+            bool hasError = !string.IsNullOrEmpty(_romBrowserError);
+            if (hasError)
+            {
+                DrawRomBrowserErrorScreen(pixels, w, h);
+                return;
+            }
+
             int listY = scale == 2 ? 48 : 34;
-            int rowHeight = 8 * scale + 2;
+            int rowHeight = 8 * scale + 1;
             int controlsY = h - 8 * scale;
-            int visibleRows = Mathf.Clamp((controlsY - listY - 4) / rowHeight, 1, 8);
+            int visibleRows = Mathf.Clamp((controlsY - listY - 4) / rowHeight, 1, 10);
             int first = Mathf.Clamp(_romBrowserIndex - visibleRows / 2, 0,
                                     Mathf.Max(0, _romList.Length - visibleRows));
 
@@ -674,15 +821,69 @@ namespace ArcadeParadiseFreePlayMod
             _screenTexture.Apply(false);
         }
 
+        private unsafe void DrawRomBrowserErrorScreen(byte* pixels, int w, int h)
+        {
+            FillBrowserRect(pixels, w, h, 0, 0, w, h, 18, 5, 8);
+            FillBrowserRect(pixels, w, h, 3, 3, w - 6, h - 6, 92, 25, 35);
+            FillBrowserRect(pixels, w, h, 5, 5, w - 10, h - 10, 18, 5, 8);
+
+            int scale = w >= 240 ? 2 : 1;
+            int margin = 8 * scale;
+            int titleY = scale == 2 ? 38 : 28;
+            int detailY = scale == 2 ? 52 : 40;
+            int filenameY = scale == 2 ? 68 : 52;
+            int reasonY = scale == 2 ? 82 : 64;
+            int hintY = scale == 2 ? 106 : 82;
+            int maxChars = Mathf.Max(8, (w - margin * 2) / 6);
+
+            DrawBrowserText(pixels, w, h, "FREE PLAY", margin, 8, scale, 127, 219, 255);
+            DrawBrowserText(pixels, w, h, "ROM LOAD ERROR", margin, titleY, 1, 255, 96, 96);
+            DrawBrowserText(pixels, w, h, "FAILED TO LOAD", margin, detailY, 1, 235, 235, 240);
+            DrawBrowserText(pixels, w, h,
+                SanitiseBrowserText(Path.GetFileNameWithoutExtension(_romBrowserError), maxChars),
+                margin, filenameY, 1, 255, 220, 110);
+            DrawBrowserText(pixels, w, h,
+                SanitiseBrowserText(_romBrowserErrorReason ?? "ROM LOAD FAILED", maxChars),
+                margin, reasonY, 1, 235, 235, 240);
+            DrawBrowserText(pixels, w, h, "CHECK ROM FILE", margin, hintY, 1, 170, 183, 196);
+
+            _screenTexture.LoadRawTextureData(_unmanagedBuffer, _screenByteCount);
+            _screenTexture.Apply(false);
+        }
+
         private string GetBrowserName(int index, int maxLength)
         {
-            string name = Path.GetFileNameWithoutExtension(_romList[index]).ToUpperInvariant();
+            string name = SanitiseBrowserText(Path.GetFileNameWithoutExtension(_romList[index]), int.MaxValue);
             if (name.Length <= maxLength)
                 return name;
 
             if (maxLength <= 2)
                 return name.Substring(0, maxLength);
             return name.Substring(0, maxLength - 2) + "..";
+        }
+
+        private static string SanitiseBrowserText(string text, int maxLength)
+        {
+            if (string.IsNullOrEmpty(text) || maxLength <= 0)
+                return string.Empty;
+
+            var result = new System.Text.StringBuilder(Mathf.Min(text.Length, maxLength));
+            foreach (char raw in text)
+            {
+                if (result.Length >= maxLength)
+                    break;
+
+                char character = char.ToUpperInvariant(raw);
+                bool supported = (character >= 'A' && character <= 'Z') ||
+                                 (character >= '0' && character <= '9') ||
+                                 character == ' ' || character == '-' || character == '_' ||
+                                 character == '/' || character == '.' || character == ':' ||
+                                 character == '>' || character == '(' || character == ')' ||
+                                 character == '+';
+                result.Append(supported ? character : ' ');
+            }
+
+            return result.ToString().Trim();
         }
 
         private static unsafe void FillBrowserRect(byte* pixels, int width, int height,
