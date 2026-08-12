@@ -324,7 +324,7 @@ namespace ArcadeParadiseFreePlayMod
             {
                 _cycleDebounceTimer -= Time.unscaledDeltaTime;
             }
-            else if (_romList != null && _romList.Length > 1)
+            else if (!_attractMode && _romList != null && _romList.Length > 1)
             {
                 bool f9Down = UnityEngine.Input.GetKey(KeyCode.F9);
                 if (f9Down && !_cycleKeyWasDown)

@@ -46,9 +46,27 @@ namespace ArcadeParadiseFreePlayMod
         // Cached input state from the keyboard and controller
         private static bool _inpUp, _inpDown, _inpLeft, _inpRight;
         private static bool _inpStart, _inpCoin, _inpBtnA, _inpBtnB;
+        private static bool _inputEnabled;
+
+        public static void SetInputEnabled(bool enabled)
+        {
+            _inputEnabled = enabled;
+            if (!enabled)
+            {
+                _inpUp = _inpDown = _inpLeft = _inpRight = false;
+                _inpStart = _inpCoin = _inpBtnA = _inpBtnB = false;
+            }
+        }
 
         public static void PollInput()
         {
+            if (!_inputEnabled)
+            {
+                _inpUp = _inpDown = _inpLeft = _inpRight = false;
+                _inpStart = _inpCoin = _inpBtnA = _inpBtnB = false;
+                return;
+            }
+
             bool kbUp    = IsWinKeyDown(KeyCode.UpArrow)    || IsWinKeyDown(KeyCode.W);
             bool kbDown  = IsWinKeyDown(KeyCode.DownArrow)  || IsWinKeyDown(KeyCode.S);
             bool kbLeft  = IsWinKeyDown(KeyCode.LeftArrow)  || IsWinKeyDown(KeyCode.A);
@@ -480,6 +498,7 @@ namespace ArcadeParadiseFreePlayMod
 
         public static void SetAudioPlayMode(bool playing)
         {
+            SetInputEnabled(playing);
             _audioPlayingMode = playing;
             Volatile.Write(ref _audioGain, 1f);
             if (_audioSource == null)
@@ -572,8 +591,10 @@ namespace ArcadeParadiseFreePlayMod
 
         public static void Shutdown()
         {
-            // stop Unity audio before unloading the native core. 
-            // also handles failed/repeated shutdowns where no core handle remains
+            // Stop Unity audio and release emulator input before unloading the
+            // native core. This also handles failed/repeated shutdowns where no
+            // core handle remains.
+            SetInputEnabled(false);
             StopAudio();
 
             // The manager may call Shutdown more than once during a failed load
@@ -599,6 +620,8 @@ namespace ArcadeParadiseFreePlayMod
             NativeLibrary.Free(handle);
 
             _keyboardCallback = null;
+            _prevCtrl = false;
+            _prevAlt = false;
             _retro_api_version = null;
             _retro_init = null;
             _retro_deinit = null;
@@ -915,6 +938,9 @@ namespace ArcadeParadiseFreePlayMod
 
         private static short InputStateCallback(uint port, uint device, uint index, uint id)
         {
+            if (!_inputEnabled)
+                return 0;
+
             short result = 0;
 
             if (device == RETRO_DEVICE_JOYPAD && port == 0)
