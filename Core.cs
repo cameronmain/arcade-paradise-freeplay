@@ -904,9 +904,19 @@ namespace ArcadeParadiseFreePlayMod
             private static int _lastFrame;
             private static ArcadeMachineComponent _lastMachine;
 
+            private static void Prefix(ArcadeMachineComponent __instance)
+            {
+                if (__instance.m_ArcadeMachineDatafile?.m_ID != FREE_PLAY_MACHINE_ID) return;
+                if (__instance.m_Game is EmulatorArcadeManager emu)
+                    emu.ReApplyScreenMaterial();
+            }
+
             private static void Postfix(ArcadeMachineComponent __instance)
             {
                 if (__instance.m_ArcadeMachineDatafile?.m_ID != FREE_PLAY_MACHINE_ID) return;
+
+                if (__instance.m_Game is EmulatorArcadeManager screenGame)
+                    screenGame.ReApplyScreenMaterial();
 
                 if (_lastMachine == __instance && _lastFrame == Time.frameCount) return;
                 _lastMachine = __instance;
@@ -921,7 +931,11 @@ namespace ArcadeParadiseFreePlayMod
                 }
 
                 if (game is EmulatorArcadeManager emu)
+                {
                     emu.OnPlayerInteract();
+                    // stock interaction path can restore the templates Graffiti Ballz screen material so must replace it before render
+                    emu.ReApplyScreenMaterial();
+                }
 
                 try
                 {
