@@ -920,6 +920,9 @@ namespace ArcadeParadiseFreePlayMod
                     game.StartGame();
                 }
 
+                if (game is EmulatorArcadeManager emu)
+                    emu.OnPlayerInteract();
+
                 try
                 {
                     GamesManager.m_ActiveGame = game;

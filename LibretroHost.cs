@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
 namespace ArcadeParadiseFreePlayMod
@@ -98,6 +100,18 @@ namespace ArcadeParadiseFreePlayMod
         private static int _frameCount;
         private static bool _coreInitialized;
         private static bool _gameLoaded;
+
+        // Libretro produces signed 16-bit interleaved stereo PCM from the retro_run() thread
+        // Unity consumes float PCM on its audio thread
+        private static AudioSource _audioSource;
+        private static AudioClip _audioClip;
+        private static AudioListener _audioListener;
+        private static AudioRingBuffer _audioBuffer;
+        private static double _audioSampleRate = 44100.0;
+        private static double _audioResampleRatio = 1.0;
+        private static bool _audioPlayingMode;
+        private static float _audioGain = 1f;
+        private const double AUDIO_BUFFER_SECONDS = 0.10;
 
         private static HashSet<uint> _seenEnvCommands = new HashSet<uint>();
         private static RetroKeyboardEventDelegate _keyboardCallback;
@@ -360,9 +374,11 @@ namespace ArcadeParadiseFreePlayMod
             _fbPitch = _fbWidth;
             _fbPortrait = _fbHeight > _fbWidth;
             TargetFps = avInfo.timing.fps > 0 ? avInfo.timing.fps : 60.0;
+            _audioSampleRate = avInfo.timing.sample_rate > 0 ? avInfo.timing.sample_rate : 44100.0;
 
             Console.WriteLine($"[LibretroHost] Game loaded: {Path.GetFileName(romPath)}");
             Console.WriteLine($"[LibretroHost]   Resolution: {_fbWidth}x{_fbHeight} @ {avInfo.timing.fps:F1} fps{(_fbPortrait ? " (portrait, will rotate)" : "")}");
+            Console.WriteLine($"[LibretroHost]   Audio: {_audioSampleRate:F0} Hz stereo");
             Console.WriteLine($"[LibretroHost]   Pixel format: {(_pixelFormat == RETRO_PIXEL_FORMAT_XRGB8888 ? "XRGB8888" : "RGB565")}");
 
             int rawSize = _fbWidth * _fbHeight;
@@ -377,6 +393,159 @@ namespace ArcadeParadiseFreePlayMod
         {
             _retro_run();
             _frameCount++;
+        }
+
+        public static void ReadAudio(Il2CppStructArray<float> data, int channels)
+        {
+            var buffer = Volatile.Read(ref _audioBuffer);
+            if (buffer == null)
+            {
+                for (int i = 0; i < data.Length; i++)
+                    data[i] = 0f;
+                return;
+            }
+
+            buffer.Read(data, channels, _audioResampleRatio);
+
+            float gain = Volatile.Read(ref _audioGain);
+            if (gain != 1f)
+            {
+                for (int i = 0; i < data.Length; i++)
+                    data[i] *= gain;
+            }
+        }
+
+        /// <summary>
+        /// Creates the cabinet's spatialised speaker source after libretro has reported the ROM's native audio rate. 
+        /// The cabinet AudioSource drives Unity's filter callback; libretro only writes PCM into the buffer.
+        /// </summary>
+        public static void StartAudio(GameObject cabinet)
+        {
+            StopAudio();
+
+            if (cabinet == null)
+                return;
+
+            int sampleRate = (int)Math.Round(_audioSampleRate);
+            if (sampleRate < 4000 || sampleRate > 192000)
+                sampleRate = 44100;
+
+            int outputSampleRate = AudioSettings.outputSampleRate;
+            if (outputSampleRate < 4000 || outputSampleRate > 192000)
+                outputSampleRate = sampleRate;
+
+            _audioResampleRatio = sampleRate / (double)outputSampleRate;
+            int bufferSamples = Math.Max(4, (int)Math.Round(sampleRate * 2 * AUDIO_BUFFER_SECONDS));
+            var buffer = new AudioRingBuffer(bufferSamples);
+            Interlocked.Exchange(ref _audioBuffer, buffer);
+
+            try
+            {
+                _audioSource = cabinet.AddComponent<AudioSource>();
+                _audioListener = UnityEngine.Object.FindObjectOfType<AudioListener>();
+                _audioSource.spatialBlend = 1f;
+                _audioSource.minDistance = 1f;
+                _audioSource.maxDistance = 3f;
+                _audioSource.rolloffMode = AudioRolloffMode.Custom;
+                _audioSource.SetCustomCurve(AudioSourceCurveType.CustomRolloff,
+                    new AnimationCurve(
+                        new Keyframe(1f, 1f),
+                        new Keyframe(2f, 0.7f),
+                        new Keyframe(3f, 0f)));
+                _audioSource.playOnAwake = false;
+                _audioSource.loop = true;
+                _audioSource.volume = 1f;
+
+                // the clip is only a silent clock for Unitys audio pipeline
+                // EmulatorArcadeManager.OnAudioFilterRead replaces its samples from the libretro ring buffer on Unitys audio thread
+                _audioClip = AudioClip.Create(
+                    "LibretroCabinetAudioClock",
+                    outputSampleRate,
+                    2,
+                    outputSampleRate,
+                    false);
+                _audioSource.clip = _audioClip;
+                _audioSource.Play();
+                SetAudioPlayMode(false);
+
+                Console.WriteLine($"[LibretroHost] Cabinet audio started: {sampleRate} Hz -> {outputSampleRate} Hz, " +
+                                  $"buffer={AUDIO_BUFFER_SECONDS * 1000:F0}ms, spatialized 1-3m");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[LibretroHost] Cabinet audio setup failed: {ex.Message}");
+                StopAudio();
+            }
+        }
+
+        public static void SetAudioPlayMode(bool playing)
+        {
+            _audioPlayingMode = playing;
+            Volatile.Write(ref _audioGain, 1f);
+            if (_audioSource == null)
+                return;
+
+            _audioSource.spatialBlend = playing ? 0f : 1f;
+            _audioSource.volume = playing ? 2f : 1f;
+        }
+
+        public static void UpdateAudioSpatialization()
+        {
+            if (_audioSource == null || _audioPlayingMode)
+                return;
+
+            if (_audioListener == null)
+                _audioListener = UnityEngine.Object.FindObjectOfType<AudioListener>();
+
+            Transform listener = _audioListener != null
+                ? _audioListener.transform
+                : Camera.main?.transform;
+            if (listener == null)
+            {
+                // fail closed rather than allowing attract audio to become a global source if the scene has not exposed its listener yet
+                Volatile.Write(ref _audioGain, 0f);
+                _audioSource.volume = 0f;
+                return;
+            }
+
+            float distance = Vector3.Distance(_audioSource.transform.position, listener.position);
+            float gain;
+            if (distance <= 1f)
+                gain = 1f;
+            else if (distance >= 3f)
+                gain = 0f;
+            else if (distance <= 2f)
+                gain = Mathf.Lerp(1f, 0.7f, distance - 1f);
+            else
+                gain = Mathf.Lerp(0.7f, 0f, distance - 2f);
+
+            // OnAudioFilterRead injects samples after part of unitys normal AudioSource path, so enforce rolloff here on the main thread. 
+            // guarantees silence beyond the cabinets attract-mode range without touching Unity from the audio thread
+            Volatile.Write(ref _audioGain, gain);
+            _audioSource.volume = gain;
+        }
+
+        private static void StopAudio()
+        {
+            Interlocked.Exchange(ref _audioBuffer, null);
+
+            if (_audioSource != null)
+            {
+                _audioSource.Stop();
+                UnityEngine.Object.Destroy(_audioSource);
+                _audioSource = null;
+            }
+
+            if (_audioClip != null)
+            {
+                UnityEngine.Object.Destroy(_audioClip);
+                _audioClip = null;
+            }
+
+            _audioListener = null;
+            _audioPlayingMode = false;
+            Volatile.Write(ref _audioGain, 1f);
+            _audioResampleRatio = 1.0;
         }
 
         public static uint[] GetFramebuffer()
@@ -403,6 +572,10 @@ namespace ArcadeParadiseFreePlayMod
 
         public static void Shutdown()
         {
+            // stop Unity audio before unloading the native core. 
+            // also handles failed/repeated shutdowns where no core handle remains
+            StopAudio();
+
             // The manager may call Shutdown more than once during a failed load
             // or while changing content. Do not invoke delegates after the native
             // library has been released.
@@ -585,8 +758,147 @@ namespace ArcadeParadiseFreePlayMod
             }
         }
 
-        private static void AudioSampleCallback(short left, short right) { }
-        private static UIntPtr AudioSampleBatchCallback(IntPtr data, UIntPtr frames) { return frames; }
+        private static void AudioSampleCallback(short left, short right)
+        {
+            var buffer = Volatile.Read(ref _audioBuffer);
+            buffer?.Write(left, right);
+        }
+
+        private static UIntPtr AudioSampleBatchCallback(IntPtr data, UIntPtr frames)
+        {
+            var buffer = Volatile.Read(ref _audioBuffer);
+            if (buffer == null || data == IntPtr.Zero)
+                return frames;
+
+            ulong frameCount = frames.ToUInt64();
+            int accepted = buffer.WriteBatch(data, frameCount > int.MaxValue ? int.MaxValue : (int)frameCount);
+            return (UIntPtr)accepted;
+        }
+
+        private sealed class AudioRingBuffer
+        {
+            private readonly float[] _samples;
+            private readonly int _capacity;
+            private int _writePosition;
+            private int _readPosition;
+
+            public AudioRingBuffer(int requestedSampleCapacity)
+            {
+                // keep the stereo frames intact and leave one sample slot empty so that equal read/write positions unambiguously mean "empty"
+                _capacity = Math.Max(4, requestedSampleCapacity & ~1);
+                _samples = new float[_capacity];
+            }
+
+            public void Write(short left, short right)
+            {
+                int write = _writePosition;
+                int read = Volatile.Read(ref _readPosition);
+                int available = write >= read
+                    ? _capacity - (write - read) - 1
+                    : read - write - 1;
+
+                if (available < 2)
+                    return;
+
+                _samples[write] = left / 32768f;
+                write = (write + 1) % _capacity;
+                _samples[write] = right / 32768f;
+                Volatile.Write(ref _writePosition, (write + 1) % _capacity);
+            }
+
+            public int WriteBatch(IntPtr data, int frames)
+            {
+                if (frames <= 0)
+                    return 0;
+
+                int write = _writePosition;
+                int read = Volatile.Read(ref _readPosition);
+                int available = write >= read
+                    ? _capacity - (write - read) - 1
+                    : read - write - 1;
+                int accepted = Math.Min(frames, available / 2);
+
+                unsafe
+                {
+                    short* source = (short*)data.ToPointer();
+                    for (int i = 0; i < accepted; i++)
+                    {
+                        _samples[write] = source[i * 2] / 32768f;
+                        write = (write + 1) % _capacity;
+                        _samples[write] = source[i * 2 + 1] / 32768f;
+                        write = (write + 1) % _capacity;
+                    }
+                }
+
+                Volatile.Write(ref _writePosition, write);
+                return accepted;
+            }
+
+            private double _resamplePhase;
+
+            public void Read(Il2CppStructArray<float> destination, int channels, double sourceToOutputRatio)
+            {
+                int read = _readPosition;
+                int write = Volatile.Read(ref _writePosition);
+                double ratio = sourceToOutputRatio > 0.0 ? sourceToOutputRatio : 1.0;
+                int outputChannels = channels > 0 ? channels : 2;
+                int outputFrames = destination.Length / outputChannels;
+
+                for (int frame = 0; frame < outputFrames; frame++)
+                {
+                    // lerp keeps 44.1/48 kHz cores from slowly underrunning or playing at the wrong pitch
+                    int availableSamples = AvailableSamples(read, write);
+                    bool havePair = availableSamples >= 4;
+                    float left = 0f;
+                    float right = 0f;
+
+                    if (havePair)
+                    {
+                        int next = (read + 2) % _capacity;
+                        float leftNext = _samples[next];
+                        float rightNext = _samples[(next + 1) % _capacity];
+                        float mix = (float)_resamplePhase;
+                        left = _samples[read] + (leftNext - _samples[read]) * mix;
+                        right = _samples[(read + 1) % _capacity] +
+                                (rightNext - _samples[(read + 1) % _capacity]) * mix;
+
+                        _resamplePhase += ratio;
+                        int availableFrames = availableSamples / 2;
+                        int consumedFrames = Math.Min((int)_resamplePhase, availableFrames - 1);
+                        _resamplePhase -= consumedFrames;
+                        int consumedSamples = consumedFrames * 2;
+                        for (int i = 0; i < consumedSamples; i++)
+                            read = (read + 1) % _capacity;
+                    }
+
+                    int destinationIndex = frame * outputChannels;
+                    if (outputChannels == 1)
+                    {
+                        destination[destinationIndex] = (left + right) * 0.5f;
+                    }
+                    else
+                    {
+                        destination[destinationIndex] = left;
+                        destination[destinationIndex + 1] = right;
+                        for (int channel = 2; channel < outputChannels; channel++)
+                            destination[destinationIndex + channel] = 0f;
+                    }
+                }
+
+                // handle an unusual partial DSP buffer without leaving stale samples in it
+                for (int i = outputFrames * outputChannels; i < destination.Length; i++)
+                    destination[i] = 0f;
+
+                Volatile.Write(ref _readPosition, read);
+            }
+
+            private int AvailableSamples(int read, int write)
+            {
+                return write >= read
+                    ? write - read
+                    : _capacity - (read - write);
+            }
+        }
 
         private static void InputPollCallback()
         {

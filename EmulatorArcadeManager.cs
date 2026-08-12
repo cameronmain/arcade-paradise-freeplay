@@ -59,6 +59,7 @@ namespace ArcadeParadiseFreePlayMod
             {
                 _State_k__BackingField = EState.Play;
                 _attractMode = false;
+                LibretroHost.SetAudioPlayMode(true);
                 _machine?.SwapToLookingAt();
                 MelonLogger.Msg("[EmulatorArcadeManager] Already initialised, resuming play");
                 return;
@@ -252,6 +253,7 @@ namespace ArcadeParadiseFreePlayMod
                 return false;
             }
 
+            LibretroHost.StartAudio(gameObject);
             MelonLogger.Msg($"[EmulatorArcadeManager] ROM loaded: {Path.GetFileName(_romPath)}");
             return true;
         }
@@ -261,6 +263,7 @@ namespace ArcadeParadiseFreePlayMod
             MelonLogger.Msg("[EmulatorArcadeManager] PlayGame() called");
 
             _emuRunning = true;
+            LibretroHost.SetAudioPlayMode(!_attractMode);
 
             if (_attractMode)
             {
@@ -296,6 +299,7 @@ namespace ArcadeParadiseFreePlayMod
                 return;
 
             _attractMode = false;
+            LibretroHost.SetAudioPlayMode(true);
             _machine?.SwapToLookingAt();
             MelonLogger.Msg("[EmulatorArcadeManager] Transitioned from attract to play mode");
         }
@@ -312,6 +316,8 @@ namespace ArcadeParadiseFreePlayMod
         {
             if (!_emuRunning)
                 return;
+
+            LibretroHost.UpdateAudioSpatialization();
 
             // ── Multi-ROM cycling hotkey (F9) ────────────────
             if (_cycleDebounceTimer > 0f)
@@ -401,6 +407,13 @@ namespace ArcadeParadiseFreePlayMod
             {
                 _machine.m_Screen.material = _screenMaterial;
             }
+        }
+
+        // Unity calls this on its audio thread for the AudioSource attached to the cabinet.
+        // It is intentionally limited to the lock-free libretro buffer bridge
+        public void OnAudioFilterRead(Il2CppStructArray<float> data, int channels)
+        {
+            LibretroHost.ReadAudio(data, channels);
         }
 
         // ── Cleanup ─────────────────────────────────────────────
