@@ -440,6 +440,7 @@ namespace ArcadeParadiseFreePlayMod
                 return;
             }
 
+            LibretroHost.ResetMenuInput();
             _romBrowserOpen = true;
             _romBrowserReturnToPlay = returnToPlay;
             _romBrowserIndex = Mathf.Clamp(_currentRomIndex, 0, _romList.Length - 1);
@@ -457,6 +458,9 @@ namespace ArcadeParadiseFreePlayMod
             if (_romList == null || _romList.Length == 0)
                 return;
 
+            bool controllerConfirm = LibretroHost.MenuConfirmDown();
+            bool controllerCancel = LibretroHost.MenuCancelDown();
+
             if (!string.IsNullOrEmpty(_romBrowserError))
             {
                 _romBrowserErrorTimer -= Time.unscaledDeltaTime;
@@ -468,8 +472,8 @@ namespace ArcadeParadiseFreePlayMod
                                     UnityEngine.Input.GetKeyDown(KeyCode.Space) ||
                                     UnityEngine.Input.GetKeyDown(KeyCode.Escape) ||
                                     UnityEngine.Input.GetKeyDown(KeyCode.Backspace) ||
-                                    UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton0) ||
-                                    UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton1) ||
+                                    controllerConfirm ||
+                                    controllerCancel ||
                                     UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton4) ||
                                     UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton5) ||
                                     UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton7) ||
@@ -525,11 +529,11 @@ namespace ArcadeParadiseFreePlayMod
 
             bool confirm = UnityEngine.Input.GetKeyDown(KeyCode.Return) ||
                            UnityEngine.Input.GetKeyDown(KeyCode.Space) ||
-                           UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton1) ||
+                           controllerConfirm ||
                            UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton7);
             bool cancel = UnityEngine.Input.GetKeyDown(KeyCode.Escape) ||
                           UnityEngine.Input.GetKeyDown(KeyCode.Backspace) ||
-                          UnityEngine.Input.GetKeyDown(KeyCode.JoystickButton0);
+                          controllerCancel;
 
             if (confirm)
                 CloseRomBrowser(launch: true);

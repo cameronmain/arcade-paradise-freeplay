@@ -57,6 +57,8 @@ namespace ArcadeParadiseFreePlayMod
         private static bool _xInputUnavailable;
         private static int _xInputUser = -1;
         private static bool _xInputLegacyDll;
+        private static bool _menuConfirmWasDown;
+        private static bool _menuCancelWasDown;
 
         private const ushort XINPUT_GAMEPAD_DPAD_UP = 0x0001;
         private const ushort XINPUT_GAMEPAD_DPAD_DOWN = 0x0002;
@@ -212,6 +214,36 @@ namespace ArcadeParadiseFreePlayMod
         private static bool IsPressed(ushort buttons, ushort button)
         {
             return (buttons & button) != 0;
+        }
+
+        private static bool MenuButtonDown(ushort xInputButton, KeyCode fallbackKey, ref bool wasDown)
+        {
+            bool isDown;
+            XInputState xinput;
+            if (TryReadXInput(out xinput))
+                isDown = IsPressed(xinput.gamepad.buttons, xInputButton);
+            else
+                isDown = Input.GetKey(fallbackKey);
+
+            bool pressed = isDown && !wasDown;
+            wasDown = isDown;
+            return pressed;
+        }
+
+        public static bool MenuConfirmDown()
+        {
+            return MenuButtonDown(XINPUT_GAMEPAD_A, KeyCode.JoystickButton1, ref _menuConfirmWasDown);
+        }
+
+        public static bool MenuCancelDown()
+        {
+            return MenuButtonDown(XINPUT_GAMEPAD_B, KeyCode.JoystickButton0, ref _menuCancelWasDown);
+        }
+
+        public static void ResetMenuInput()
+        {
+            _menuConfirmWasDown = false;
+            _menuCancelWasDown = false;
         }
 
         private static float TriggerFromUnityAxes(float primary, float alternate)
