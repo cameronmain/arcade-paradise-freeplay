@@ -46,26 +46,254 @@ namespace ArcadeParadiseFreePlayMod
         // Cached input state from the keyboard and controller
         private static bool _inpUp, _inpDown, _inpLeft, _inpRight;
         private static bool _inpStart, _inpCoin, _inpBtnA, _inpBtnB;
+        private static bool _inpBtnX, _inpBtnY, _inpL, _inpR, _inpL2, _inpR2, _inpL3, _inpR3;
+        private static short _inpL2Value, _inpR2Value;
+        private static short _inpAnalogLeftX, _inpAnalogLeftY, _inpAnalogRightX, _inpAnalogRightY;
         private static bool _inputEnabled;
+
+        // XInput gives Unity's legacy input path the same standard controller
+        // semantics that RetroArch uses (including analog triggers). Non-XInput
+        // devices still use the Unity joystick fallback below.
+        private static bool _xInputUnavailable;
+        private static int _xInputUser = -1;
+        private static bool _xInputLegacyDll;
+
+        private const ushort XINPUT_GAMEPAD_DPAD_UP = 0x0001;
+        private const ushort XINPUT_GAMEPAD_DPAD_DOWN = 0x0002;
+        private const ushort XINPUT_GAMEPAD_DPAD_LEFT = 0x0004;
+        private const ushort XINPUT_GAMEPAD_DPAD_RIGHT = 0x0008;
+        private const ushort XINPUT_GAMEPAD_START = 0x0010;
+        private const ushort XINPUT_GAMEPAD_BACK = 0x0020;
+        private const ushort XINPUT_GAMEPAD_LEFT_SHOULDER = 0x0100;
+        private const ushort XINPUT_GAMEPAD_RIGHT_SHOULDER = 0x0200;
+        private const ushort XINPUT_GAMEPAD_LEFT_THUMB = 0x0400;
+        private const ushort XINPUT_GAMEPAD_RIGHT_THUMB = 0x0800;
+        private const ushort XINPUT_GAMEPAD_A = 0x1000;
+        private const ushort XINPUT_GAMEPAD_B = 0x2000;
+        private const ushort XINPUT_GAMEPAD_X = 0x4000;
+        private const ushort XINPUT_GAMEPAD_Y = 0x8000;
+        private const byte XINPUT_TRIGGER_THRESHOLD = 30;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XInputGamepad
+        {
+            public ushort buttons;
+            public byte leftTrigger;
+            public byte rightTrigger;
+            public short thumbLX;
+            public short thumbLY;
+            public short thumbRX;
+            public short thumbRY;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XInputState
+        {
+            public uint packetNumber;
+            public XInputGamepad gamepad;
+        }
+
+        [DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
+        private static extern uint XInputGetState14(uint userIndex, ref XInputState state);
+
+        [DllImport("xinput9_1_0.dll", EntryPoint = "XInputGetState")]
+        private static extern uint XInputGetStateLegacy(uint userIndex, ref XInputState state);
+
+        private const uint ERROR_SUCCESS = 0;
+        private const uint ERROR_DEVICE_NOT_CONNECTED = 1167;
+
+        private static void ClearInputState()
+        {
+            _inpUp = _inpDown = _inpLeft = _inpRight = false;
+            _inpStart = _inpCoin = _inpBtnA = _inpBtnB = false;
+            _inpBtnX = _inpBtnY = _inpL = _inpR = false;
+            _inpL2 = _inpR2 = _inpL3 = _inpR3 = false;
+            _inpL2Value = _inpR2Value = 0;
+            _inpAnalogLeftX = _inpAnalogLeftY = 0;
+            _inpAnalogRightX = _inpAnalogRightY = 0;
+        }
+
+        private static float ReadJoystickAxis(int axis)
+        {
+            float strongest = 0f;
+            for (int joystick = 1; joystick <= 4; joystick++)
+            {
+                try
+                {
+                    float value = Input.GetAxisRaw($"Joystick{joystick}Axis{axis}");
+                    if (Mathf.Abs(value) > Mathf.Abs(strongest))
+                        strongest = value;
+                }
+                catch
+                {
+                    // missing legacy axis is normal for some controllers
+                }
+            }
+            return strongest;
+        }
+
+        private static short ToRetroAxis(float value)
+        {
+            return (short)Mathf.Clamp(Mathf.RoundToInt(value * 32767f), -32767, 32767);
+        }
+
+        private static bool TryReadXInput(out XInputState state)
+        {
+            state = new XInputState();
+            if (_xInputUnavailable)
+                return false;
+
+            try
+            {
+                if (!_xInputLegacyDll)
+                {
+                    if (_xInputUser >= 0)
+                    {
+                        uint result = XInputGetState14((uint)_xInputUser, ref state);
+                        if (result == ERROR_SUCCESS)
+                            return true;
+                        if (result != ERROR_DEVICE_NOT_CONNECTED)
+                            _xInputUser = -1;
+                    }
+
+                    for (uint user = 0; user < 4 && _xInputUser < 0; user++)
+                    {
+                        uint result = XInputGetState14(user, ref state);
+                        if (result == ERROR_SUCCESS)
+                        {
+                            _xInputUser = (int)user;
+                            return true;
+                        }
+                    }
+                }
+                else
+                {
+                    if (_xInputUser >= 0)
+                    {
+                        uint result = XInputGetStateLegacy((uint)_xInputUser, ref state);
+                        if (result == ERROR_SUCCESS)
+                            return true;
+                        _xInputUser = -1;
+                    }
+
+                    for (uint user = 0; user < 4 && _xInputUser < 0; user++)
+                    {
+                        uint result = XInputGetStateLegacy(user, ref state);
+                        if (result == ERROR_SUCCESS)
+                        {
+                            _xInputUser = (int)user;
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch (DllNotFoundException)
+            {
+                if (!_xInputLegacyDll)
+                {
+                    _xInputLegacyDll = true;
+                    return TryReadXInput(out state);
+                }
+                _xInputUnavailable = true;
+            }
+            catch (EntryPointNotFoundException)
+            {
+                if (!_xInputLegacyDll)
+                {
+                    _xInputLegacyDll = true;
+                    return TryReadXInput(out state);
+                }
+                _xInputUnavailable = true;
+            }
+
+            return false;
+        }
+
+        private static bool IsPressed(ushort buttons, ushort button)
+        {
+            return (buttons & button) != 0;
+        }
+
+        private static float TriggerFromUnityAxes(float primary, float alternate)
+        {
+            // unity exposes DirectInput trigger axes as positive values on most devices. 
+            // dont use absolute value here: on devices that  expose a resting signed axis, -1 means released, not pressed
+            return Mathf.Clamp01(Mathf.Max(primary, alternate));
+        }
+
+        private static void PollXInputFallback(out bool connected)
+        {
+            connected = false;
+            XInputState xinput;
+            if (TryReadXInput(out xinput))
+            {
+                connected = true;
+                ushort buttons = xinput.gamepad.buttons;
+                _inpUp |= IsPressed(buttons, XINPUT_GAMEPAD_DPAD_UP) || xinput.gamepad.thumbLY > 16000;
+                _inpDown |= IsPressed(buttons, XINPUT_GAMEPAD_DPAD_DOWN) || xinput.gamepad.thumbLY < -16000;
+                _inpLeft |= IsPressed(buttons, XINPUT_GAMEPAD_DPAD_LEFT) || xinput.gamepad.thumbLX < -16000;
+                _inpRight |= IsPressed(buttons, XINPUT_GAMEPAD_DPAD_RIGHT) || xinput.gamepad.thumbLX > 16000;
+                _inpStart |= IsPressed(buttons, XINPUT_GAMEPAD_START);
+                _inpCoin |= IsPressed(buttons, XINPUT_GAMEPAD_BACK);
+
+                // Trying to set up a universal control scheme is a absolute pain, 
+                // currently matching the controller's retroarch/arcade action order:
+                // physical Xbox B feeds libretro A, and physical Xbox A feeds libretro B. 
+                // Keep keyboard bindings independent below.
+                _inpBtnA |= IsPressed(buttons, XINPUT_GAMEPAD_B);
+                _inpBtnB |= IsPressed(buttons, XINPUT_GAMEPAD_A);
+                _inpBtnX |= IsPressed(buttons, XINPUT_GAMEPAD_X);
+                _inpBtnY |= IsPressed(buttons, XINPUT_GAMEPAD_Y);
+                _inpL |= IsPressed(buttons, XINPUT_GAMEPAD_LEFT_SHOULDER);
+                _inpR |= IsPressed(buttons, XINPUT_GAMEPAD_RIGHT_SHOULDER);
+                _inpL2Value = ToRetroAxis(xinput.gamepad.leftTrigger / 255f);
+                _inpR2Value = ToRetroAxis(xinput.gamepad.rightTrigger / 255f);
+                _inpL2 |= _inpL2Value >= ToRetroAxis(XINPUT_TRIGGER_THRESHOLD / 255f);
+                _inpR2 |= _inpR2Value >= ToRetroAxis(XINPUT_TRIGGER_THRESHOLD / 255f);
+                _inpL3 |= IsPressed(buttons, XINPUT_GAMEPAD_LEFT_THUMB);
+                _inpR3 |= IsPressed(buttons, XINPUT_GAMEPAD_RIGHT_THUMB);
+                _inpAnalogLeftX = ToRetroAxis(xinput.gamepad.thumbLX / 32767f);
+                _inpAnalogLeftY = ToRetroAxis(-xinput.gamepad.thumbLY / 32768f);
+                _inpAnalogRightX = ToRetroAxis(xinput.gamepad.thumbRX / 32767f);
+                _inpAnalogRightY = ToRetroAxis(-xinput.gamepad.thumbRY / 32768f);
+            }
+        }
+
+        private static void PollUnityAnalogFallback()
+        {
+            float axisH = Input.GetAxis("Horizontal");
+            float axisV = Input.GetAxis("Vertical");
+            float rightX = ReadJoystickAxis(3);
+            float rightY = ReadJoystickAxis(4);
+            float triggerLeft = TriggerFromUnityAxes(ReadJoystickAxis(5), ReadJoystickAxis(9));
+            float triggerRight = TriggerFromUnityAxes(ReadJoystickAxis(6), ReadJoystickAxis(10));
+
+            _inpAnalogLeftX = ToRetroAxis(Mathf.Clamp(axisH, -1f, 1f));
+            _inpAnalogLeftY = ToRetroAxis(Mathf.Clamp(-axisV, -1f, 1f));
+            _inpAnalogRightX = ToRetroAxis(Mathf.Clamp(rightX, -1f, 1f));
+            _inpAnalogRightY = ToRetroAxis(Mathf.Clamp(-rightY, -1f, 1f));
+            _inpL2Value = ToRetroAxis(triggerLeft);
+            _inpR2Value = ToRetroAxis(triggerRight);
+            _inpL2 |= _inpL2Value >= 16384;
+            _inpR2 |= _inpR2Value >= 16384;
+        }
 
         public static void SetInputEnabled(bool enabled)
         {
             _inputEnabled = enabled;
             if (!enabled)
-            {
-                _inpUp = _inpDown = _inpLeft = _inpRight = false;
-                _inpStart = _inpCoin = _inpBtnA = _inpBtnB = false;
-            }
+                ClearInputState();
         }
 
         public static void PollInput()
         {
             if (!_inputEnabled)
             {
-                _inpUp = _inpDown = _inpLeft = _inpRight = false;
-                _inpStart = _inpCoin = _inpBtnA = _inpBtnB = false;
+                ClearInputState();
                 return;
             }
+
+            ClearInputState();
 
             bool kbUp    = IsWinKeyDown(KeyCode.UpArrow)    || IsWinKeyDown(KeyCode.W);
             bool kbDown  = IsWinKeyDown(KeyCode.DownArrow)  || IsWinKeyDown(KeyCode.S);
@@ -86,15 +314,47 @@ namespace ArcadeParadiseFreePlayMod
             bool padCoin  = Input.GetKey(KeyCode.JoystickButton6);
             bool padA     = Input.GetKey(KeyCode.JoystickButton1);
             bool padB     = Input.GetKey(KeyCode.JoystickButton0);
+            bool padX     = Input.GetKey(KeyCode.JoystickButton2);
+            bool padY     = Input.GetKey(KeyCode.JoystickButton3);
+            bool padL     = Input.GetKey(KeyCode.JoystickButton4);
+            bool padR     = Input.GetKey(KeyCode.JoystickButton5);
+            bool padL3    = Input.GetKey(KeyCode.JoystickButton8);
+            bool padR3    = Input.GetKey(KeyCode.JoystickButton9);
 
-            _inpUp    = kbUp    || padUp;
-            _inpDown  = kbDown  || padDown;
-            _inpLeft  = kbLeft  || padLeft;
-            _inpRight = kbRight || padRight;
-            _inpStart = kbStart || padStart;
-            _inpCoin  = kbCoin  || padCoin;
-            _inpBtnA  = kbA     || padA;
-            _inpBtnB  = kbB     || padB;
+            // Keep keyboard input available regardless of controller type.
+            // Controller input is selected as one complete source below so a physical button cannot be interpreted once by XInput and again by unitys differently ordered legacy button slots
+            _inpUp    = kbUp;
+            _inpDown  = kbDown;
+            _inpLeft  = kbLeft;
+            _inpRight = kbRight;
+            _inpStart = kbStart;
+            _inpCoin  = kbCoin;
+            _inpBtnA  = kbA;
+            _inpBtnB  = kbB;
+            _inpBtnX  = false;
+            _inpBtnY  = kbA;
+            _inpL     = _inpR = _inpL3 = _inpR3 = false;
+
+            bool xInputConnected;
+            PollXInputFallback(out xInputConnected);
+            if (!xInputConnected)
+            {
+                _inpUp    |= padUp;
+                _inpDown  |= padDown;
+                _inpLeft  |= padLeft;
+                _inpRight |= padRight;
+                _inpStart |= padStart;
+                _inpCoin  |= padCoin;
+                _inpBtnA  |= padA;
+                _inpBtnB  |= padB;
+                _inpBtnX   = padX;
+                _inpBtnY  |= padY;
+                _inpL      = padL;
+                _inpR      = padR;
+                _inpL3     = padL3;
+                _inpR3     = padR3;
+                PollUnityAnalogFallback();
+            }
         }
 
         private static IntPtr _coreHandle;
@@ -119,8 +379,8 @@ namespace ArcadeParadiseFreePlayMod
         private static bool _coreInitialized;
         private static bool _gameLoaded;
 
-        // Libretro produces signed 16-bit interleaved stereo PCM from the retro_run() thread
-        // Unity consumes float PCM on its audio thread
+        // libretro produces signed 16-bit interleaved stereo PCM from the retro_run() thread
+        // unity consumes float PCM on its audio thread
         private static AudioSource _audioSource;
         private static AudioClip _audioClip;
         private static AudioListener _audioListener;
@@ -209,6 +469,12 @@ namespace ArcadeParadiseFreePlayMod
         public const uint RETRO_DEVICE_ID_JOYPAD_RIGHT = 7;
         public const uint RETRO_DEVICE_ID_JOYPAD_A = 8;
         public const uint RETRO_DEVICE_ID_JOYPAD_X = 9;
+        public const uint RETRO_DEVICE_ID_JOYPAD_L = 10;
+        public const uint RETRO_DEVICE_ID_JOYPAD_R = 11;
+        public const uint RETRO_DEVICE_ID_JOYPAD_L2 = 12;
+        public const uint RETRO_DEVICE_ID_JOYPAD_R2 = 13;
+        public const uint RETRO_DEVICE_ID_JOYPAD_L3 = 14;
+        public const uint RETRO_DEVICE_ID_JOYPAD_R3 = 15;
 
         private const uint RETRO_ENVIRONMENT_SET_PIXEL_FORMAT = 10;
         private const uint RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY = 9;
@@ -953,7 +1219,7 @@ namespace ArcadeParadiseFreePlayMod
                 {
                     int mask = 0;
                     if (_inpBtnB)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_B;
-                    if (_inpBtnA)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_Y;
+                    if (_inpBtnY)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_Y;
                     if (_inpCoin)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_SELECT;
                     if (_inpStart) mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_START;
                     if (_inpUp)    mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_UP;
@@ -961,6 +1227,13 @@ namespace ArcadeParadiseFreePlayMod
                     if (_inpLeft)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_LEFT;
                     if (_inpRight) mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_RIGHT;
                     if (_inpBtnA)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_A;
+                    if (_inpBtnX)  mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_X;
+                    if (_inpL)     mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_L;
+                    if (_inpR)     mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_R;
+                    if (_inpL2)    mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_L2;
+                    if (_inpR2)    mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_R2;
+                    if (_inpL3)    mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_L3;
+                    if (_inpR3)    mask |= 1 << (int)RETRO_DEVICE_ID_JOYPAD_R3;
                     result = unchecked((short)mask);
                 }
                 else
@@ -968,7 +1241,7 @@ namespace ArcadeParadiseFreePlayMod
                     result = id switch
                     {
                         RETRO_DEVICE_ID_JOYPAD_B => _inpBtnB ? (short)1 : (short)0,
-                        RETRO_DEVICE_ID_JOYPAD_Y => _inpBtnA ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_Y => _inpBtnY ? (short)1 : (short)0,
                         RETRO_DEVICE_ID_JOYPAD_SELECT => _inpCoin ? (short)1 : (short)0,
                         RETRO_DEVICE_ID_JOYPAD_START => _inpStart ? (short)1 : (short)0,
                         RETRO_DEVICE_ID_JOYPAD_UP => _inpUp ? (short)1 : (short)0,
@@ -976,7 +1249,13 @@ namespace ArcadeParadiseFreePlayMod
                         RETRO_DEVICE_ID_JOYPAD_LEFT => _inpLeft ? (short)1 : (short)0,
                         RETRO_DEVICE_ID_JOYPAD_RIGHT => _inpRight ? (short)1 : (short)0,
                         RETRO_DEVICE_ID_JOYPAD_A => _inpBtnA ? (short)1 : (short)0,
-                        RETRO_DEVICE_ID_JOYPAD_X => 0,
+                        RETRO_DEVICE_ID_JOYPAD_X => _inpBtnX ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_L => _inpL ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_R => _inpR ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_L2 => _inpL2Value,
+                        RETRO_DEVICE_ID_JOYPAD_R2 => _inpR2Value,
+                        RETRO_DEVICE_ID_JOYPAD_L3 => _inpL3 ? (short)1 : (short)0,
+                        RETRO_DEVICE_ID_JOYPAD_R3 => _inpR3 ? (short)1 : (short)0,
                         _ => 0
                     };
                 }
@@ -990,13 +1269,17 @@ namespace ArcadeParadiseFreePlayMod
             }
             else if (device == RETRO_DEVICE_ANALOG && port == 0)
             {
-                // Analog input queries use this path for directional axes.
-                result = (int)id switch
+                // Libretro analog queries use index 0=left stick, 1=right
+                // stick and id 0=X, 1=Y. Return the same signed range as
+                // RetroArch rather than reducing sticks to digital buttons.
+                if (index == 0)
                 {
-                    0 => _inpLeft ? (short)-0x7FFF : _inpRight ? (short)0x7FFF : (short)0,
-                    1 => _inpUp ? (short)-0x7FFF : _inpDown ? (short)0x7FFF : (short)0,
-                    _ => 0
-                };
+                    result = id == 0 ? _inpAnalogLeftX : id == 1 ? _inpAnalogLeftY : (short)0;
+                }
+                else if (index == 1)
+                {
+                    result = id == 0 ? _inpAnalogRightX : id == 1 ? _inpAnalogRightY : (short)0;
+                }
             }
 
             return result;

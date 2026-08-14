@@ -71,14 +71,13 @@ The mod scans the `roms/` directory for `.zip` files and creates the folder auto
 
 ### Recommended input
 
-The mod does **not** use XInput directly. Controller input is read through Unity's legacy input API using the `Horizontal` and `Vertical` axes plus generic joystick buttons. An Xbox controller is the only gamepad tested so far, so it is the known-good reference. Other controllers may work if Unity exposes them through the same mappings, but they are not currently verified.
+Controller input uses a standard RetroPad mapping, so games do not need separate bindings. Sticks, face buttons, shoulders and triggers are supported automatically where available.
 
-On the tested Xbox controller:
-
-- The D-pad or left stick controls movement.
-- The Menu/Start button starts the game.
-- The View/Back button inserts a coin.
-- The two main face buttons provide the arcade action buttons. Individual games may label these buttons differently.
+- D-pad or left stick: movement
+- Menu/Start: start
+- View/Back: coin
+- Face buttons: arcade actions
+- Triggers: occassionally supported, ROM dependent
 
 Keyboard input is available as a fallback. The current keyboard mapping passed to the libretro core is:
 
