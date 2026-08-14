@@ -291,6 +291,11 @@
 
 	<ItemGroup>
 		<Compile Include="Core.cs" />
+		<Compile Include="Core.Cabinet.cs" />
+		<Compile Include="Core.Patches.cs" />
+		<Compile Include="Core.Persistence.cs" />
+		<Compile Include="Core.Shop.cs" />
+		<Compile Include="Core.Visuals.cs" />
 		<Compile Include="LibretroHost.cs" />
 		<Compile Include="EmulatorArcadeManager.cs" />
 		<Compile Include="ConfigLoader.cs" />
