@@ -99,6 +99,7 @@ namespace ArcadeParadiseFreePlayMod
             MelonLogger.Msg("[EmulatorArcadeManager] StopGame() - full reset, restarting attract mode");
 
             _emuRunning = false;
+            Core.SetFreePlayPdaInputBlocked(false);
             _State_k__BackingField = EState.Idle;
             CleanGame();
             IsInitalised = false;
@@ -310,6 +311,7 @@ namespace ArcadeParadiseFreePlayMod
 
             // cabinet interaction starts the currently selected ROM
             _attractMode = false;
+            Core.SetFreePlayPdaInputBlocked(true);
             LibretroHost.SetAudioPlayMode(true);
             _machine?.SwapToLookingAt();
             MelonLogger.Msg($"[EmulatorArcadeManager] Cabinet interacted; playing ROM: {Path.GetFileName(_romPath)}");
@@ -569,6 +571,7 @@ namespace ArcadeParadiseFreePlayMod
             if (launch || returnToPlay)
             {
                 _attractMode = false;
+                Core.SetFreePlayPdaInputBlocked(true);
                 LibretroHost.SetAudioPlayMode(true);
                 _machine?.SwapToLookingAt();
                 MelonLogger.Msg($"[EmulatorArcadeManager] Playing ROM: {Path.GetFileName(_romPath)}");
@@ -576,6 +579,7 @@ namespace ArcadeParadiseFreePlayMod
             else
             {
                 _attractMode = true;
+                Core.SetFreePlayPdaInputBlocked(false);
                 LibretroHost.SetAudioPlayMode(false);
                 MelonLogger.Msg("[EmulatorArcadeManager] ROM browser cancelled: returning to attract mode");
             }
@@ -633,6 +637,7 @@ namespace ArcadeParadiseFreePlayMod
 
             _emuRunning = false;
             _romBrowserOpen = false;
+            Core.SetFreePlayPdaInputBlocked(false);
 
             Input = null;
             Players = null;
@@ -717,6 +722,7 @@ namespace ArcadeParadiseFreePlayMod
             _romBrowserErrorReason = null;
             _emuRunning = false;
             _attractMode = true;
+            Core.SetFreePlayPdaInputBlocked(false);
             LibretroHost.SetAudioPlayMode(false);
             ReApplyScreenMaterial();
             DrawFatalErrorScreen(reason, failedPath);

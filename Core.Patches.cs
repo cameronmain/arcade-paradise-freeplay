@@ -11,6 +11,24 @@ namespace ArcadeParadiseFreePlayMod
 {
     public partial class Core
     {
+        [HarmonyPatch(typeof(MenuManager), nameof(MenuManager.HandleMenuToggle))]
+        private static class BlockFreePlayMenuTogglePatch
+        {
+            private static bool Prefix()
+            {
+                return !IsFreePlayPdaInputBlocked;
+            }
+        }
+
+        [HarmonyPatch(typeof(MenuManager), nameof(MenuManager.ToggleMenus))]
+        private static class BlockFreePlayToggleMenusPatch
+        {
+            private static bool Prefix()
+            {
+                return !IsFreePlayPdaInputBlocked;
+            }
+        }
+
         [HarmonyPatch(typeof(Il2CppRAT.UI.Computer.CUI_ArcadeMania), "Open")]
         private static class ArcadeManiaOpenPatch
         {
@@ -195,6 +213,8 @@ namespace ArcadeParadiseFreePlayMod
             private static void Prefix(ArcadeMachineComponent __instance)
             {
                 if (__instance.m_ArcadeMachineDatafile?.m_ID != FREE_PLAY_MACHINE_ID) return;
+
+                SetFreePlayPdaInputBlocked(true);
                 if (__instance.m_Game is EmulatorArcadeManager emu)
                     emu.ReApplyScreenMaterial();
             }
@@ -242,6 +262,7 @@ namespace ArcadeParadiseFreePlayMod
             private static void Postfix(ArcadeMachineComponent __instance)
             {
                 if (__instance.m_ArcadeMachineDatafile?.m_ID != FREE_PLAY_MACHINE_ID) return;
+                SetFreePlayPdaInputBlocked(false);
                 __instance.CancelInvoke("SwapToAttractMode");
                 MelonLogger.Msg("[Harmony] OnDisconnect completed: cancelled attract screen swap");
             }

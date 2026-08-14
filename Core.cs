@@ -31,12 +31,14 @@ namespace ArcadeParadiseFreePlayMod
         private const string SAVE_KEY_DELIVERY_Z = "apfreeplay_delivery_pos_z";
         private const string SAVE_KEY_DELIVERY_ROT_Y = "apfreeplay_delivery_rot_y";
         private const string SAVE_KEY_MACHINE_ORDER = "machine_99001";
+       
         private const float FREE_PLAY_LOCATION_BONUS = 5f;
         private static Core _instance;
         private bool _spawned = false;
         private bool _shopInjected;
         private bool _saveStateReady;
         private bool _baseSceneLoaded;
+        private static bool _freePlayPdaInputBlocked;
         private float _nextPersistenceCheck;
         private ArcadeGame _freePlayGame;
         private ArcadeMachineComponent _freePlayMachine;
@@ -61,11 +63,19 @@ namespace ArcadeParadiseFreePlayMod
             TryInjectFreePlayCabinet();
         }
 
+        internal static void SetFreePlayPdaInputBlocked(bool blocked)
+        {
+            _freePlayPdaInputBlocked = blocked;
+        }
+
+        internal static bool IsFreePlayPdaInputBlocked => _freePlayPdaInputBlocked;
+
         public override void OnSceneWasUnloaded(int buildIndex, string sceneName)
         {
             if (sceneName == "BaseScene")
             {
                 _baseSceneLoaded = false;
+                _freePlayPdaInputBlocked = false;
                 _spawned = false;
                 _shopInjected = false;
                 _saveStateReady = false;
