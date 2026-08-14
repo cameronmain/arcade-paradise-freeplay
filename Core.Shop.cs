@@ -24,9 +24,8 @@ namespace ArcadeParadiseFreePlayMod
                     existing.UpdateItemDetails();
                     existing.ComingSoon(false);
                     existing.gameObject.SetActive(true);
-                    existing.m_PageButton = existing.m_Button;
                     if (existing.m_Button != null)
-                        existing.m_Button.interactable = !IsFreePlayPlaced() && !freePlayData.m_OnDelivery;
+                        existing.m_Button.interactable = true;
                     EnsureFreePlayShopListRegistration(arcadeMania, existing);
                     _shopInjected = true;
                     MelonLogger.Msg("[ShopInject] FreePlay already in shop: reinitialised existing item");
@@ -53,10 +52,9 @@ namespace ArcadeParadiseFreePlayMod
             catch (Exception ex) { MelonLogger.Warning($"[ShopInject] Title override failed: {ex.Message}"); }
             try { if (newItem.m_Description != null) newItem.m_Description.text = "Load your own arcade ROMs and play classic coin-op games!"; }
             catch (Exception ex) { MelonLogger.Warning($"[ShopInject] Description override failed: {ex.Message}"); }
-            newItem.m_PageButton = newItem.m_Button;
             newItem.gameObject.SetActive(true);
             if (newItem.m_Button != null)
-                newItem.m_Button.interactable = !IsFreePlayPlaced() && !freePlayData.m_OnDelivery;
+                newItem.m_Button.interactable = true;
 
             EnsureFreePlayShopListRegistration(arcadeMania, newItem);
             _shopInjected = true;

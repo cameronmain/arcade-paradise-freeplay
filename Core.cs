@@ -147,8 +147,7 @@ namespace ArcadeParadiseFreePlayMod
             if (freePlayItem.m_Button == null)
                 return false;
 
-            bool shouldBeInteractable = !IsFreePlayPlaced() && !freePlayItem.m_ArcadeMachineData.m_OnDelivery;
-            if (freePlayItem.m_Button.interactable != shouldBeInteractable)
+            if (!freePlayItem.m_Button.interactable)
                 return false;
 
             bool inMachineItems = false;

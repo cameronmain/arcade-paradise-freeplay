@@ -99,6 +99,8 @@ namespace ArcadeParadiseFreePlayMod
                 if (__instance.m_ArcadeMachineData?.m_ID != FREE_PLAY_MACHINE_ID) return;
                 try { if (__instance.m_Title != null) __instance.m_Title.text = "Free Play"; }
                 catch (Exception ex) { MelonLogger.Warning($"[Harmony] Title fallback failed: {ex.Message}"); }
+                try { if (__instance.m_Button != null) __instance.m_Button.interactable = true; }
+                catch (Exception ex) { MelonLogger.Warning($"[Harmony] View Item button restore failed: {ex.Message}"); }
                 try { if (__instance.m_Description != null) __instance.m_Description.text = "Load your own arcade ROMs and play classic coin-op games!"; }
                 catch (Exception ex) { MelonLogger.Warning($"[Harmony] Description fallback failed: {ex.Message}"); }
             }
