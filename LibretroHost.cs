@@ -782,15 +782,9 @@ namespace ArcadeParadiseFreePlayMod
             {
                 _audioSource = cabinet.AddComponent<AudioSource>();
                 _audioListener = UnityEngine.Object.FindObjectOfType<AudioListener>();
-                _audioSource.spatialBlend = 1f;
-                _audioSource.minDistance = 1f;
-                _audioSource.maxDistance = 3f;
-                _audioSource.rolloffMode = AudioRolloffMode.Custom;
-                _audioSource.SetCustomCurve(AudioSourceCurveType.CustomRolloff,
-                    new AnimationCurve(
-                        new Keyframe(1f, 1f),
-                        new Keyframe(2f, 0.7f),
-                        new Keyframe(3f, 0f)));
+                // flat 2D output: OnAudioFilterRead replaces the samples, so unitys 3D panning/rolloff is bypassed.
+                // loudness and panning are handled manually in UpdateAudioSpatialization + ReadAudio instead
+                _audioSource.spatialBlend = 0f;
                 _audioSource.playOnAwake = false;
                 _audioSource.loop = true;
                 _audioSource.volume = 1f;
@@ -823,11 +817,6 @@ namespace ArcadeParadiseFreePlayMod
             _audioPlayingMode = playing;
             Volatile.Write(ref _audioGain, 1f);
             Volatile.Write(ref _audioPan, 0f);
-            if (_audioSource == null)
-                return;
-
-            _audioSource.spatialBlend = playing ? 0f : 1f;
-            _audioSource.volume = playing ? 2f : 1f;
         }
 
         public static void UpdateAudioSpatialization()
@@ -845,7 +834,6 @@ namespace ArcadeParadiseFreePlayMod
             {
                 // fail closed rather than allowing attract audio to become a global source if the scene has not exposed its listener yet
                 Volatile.Write(ref _audioGain, 0f);
-                _audioSource.volume = 0f;
                 return;
             }
 
@@ -874,7 +862,6 @@ namespace ArcadeParadiseFreePlayMod
             // OnAudioFilterRead injects samples after part of unitys normal AudioSource path, so enforce rolloff here on the main thread. 
             // guarantees silence beyond the cabinets attract-mode range without touching Unity from the audio thread
             Volatile.Write(ref _audioGain, gain);
-            _audioSource.volume = gain;
         }
 
         private static void StopAudio()
