@@ -358,8 +358,11 @@ namespace ArcadeParadiseFreePlayMod
                 return;
             }
 
-            // cache combined keyboard + controller input so callbacks running during retro_run() see fresh state
-            LibretroHost.PollInput();
+            // Don't run the attract demo in the background while nobody is near the
+            // cabinet; it otherwise burns main-thread time and makes controller
+            // input hitch across the whole game.
+            if (_attractMode && LibretroHost.CabinetDistance >= 3f)
+                return;
 
             // frame pacing: run emulator frames at the cores target rate
             _emuFrameAccum += Time.unscaledDeltaTime;
@@ -367,8 +370,11 @@ namespace ArcadeParadiseFreePlayMod
             if (_emuFrameAccum < frameTime)
                 return;
 
-            // use while (not if) to avoid drift/skip cycles that make input feel sticky & cap at 4 frames to prevent runaway fast-forward after alt-tab
-            int maxFrames = 4;
+            // poll input only when actually stepping the emulator not every unity frame
+            LibretroHost.PollInput();
+
+            // cap catchup at 2 frames so a single slow Unity update cannot burst several emulation+audio frames at once and starve the audio buffer
+            int maxFrames = 2;
             while (_emuFrameAccum >= frameTime && maxFrames-- > 0)
             {
                 _emuFrameAccum -= frameTime;

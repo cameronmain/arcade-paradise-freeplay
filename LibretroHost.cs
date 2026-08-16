@@ -336,23 +336,6 @@ namespace ArcadeParadiseFreePlayMod
             bool kbA     = IsWinKeyDown(KeyCode.LeftAlt)    || IsWinKeyDown(KeyCode.X);
             bool kbB     = IsWinKeyDown(KeyCode.LeftControl)|| IsWinKeyDown(KeyCode.Z);
 
-            float axisH = Input.GetAxis("Horizontal");
-            float axisV = Input.GetAxis("Vertical");
-            bool padUp    = axisV > 0.5f;
-            bool padDown  = axisV < -0.5f;
-            bool padLeft  = axisH < -0.5f;
-            bool padRight = axisH > 0.5f;
-            bool padStart = Input.GetKey(KeyCode.JoystickButton7);
-            bool padCoin  = Input.GetKey(KeyCode.JoystickButton6);
-            bool padA     = Input.GetKey(KeyCode.JoystickButton1);
-            bool padB     = Input.GetKey(KeyCode.JoystickButton0);
-            bool padX     = Input.GetKey(KeyCode.JoystickButton2);
-            bool padY     = Input.GetKey(KeyCode.JoystickButton3);
-            bool padL     = Input.GetKey(KeyCode.JoystickButton4);
-            bool padR     = Input.GetKey(KeyCode.JoystickButton5);
-            bool padL3    = Input.GetKey(KeyCode.JoystickButton8);
-            bool padR3    = Input.GetKey(KeyCode.JoystickButton9);
-
             // Keep keyboard input available regardless of controller type.
             // Controller input is selected as one complete source below so a physical button cannot be interpreted once by XInput and again by unitys differently ordered legacy button slots
             _inpUp    = kbUp;
@@ -371,6 +354,25 @@ namespace ArcadeParadiseFreePlayMod
             PollXInputFallback(out xInputConnected);
             if (!xInputConnected)
             {
+                // Only query unitys legacy joystick API when there is no XInput device, 
+                // so it cannot contend with the games own controller input handling and add perframe load while a controller is in use
+                float axisH = Input.GetAxis("Horizontal");
+                float axisV = Input.GetAxis("Vertical");
+                bool padUp    = axisV > 0.5f;
+                bool padDown  = axisV < -0.5f;
+                bool padLeft  = axisH < -0.5f;
+                bool padRight = axisH > 0.5f;
+                bool padStart = Input.GetKey(KeyCode.JoystickButton7);
+                bool padCoin  = Input.GetKey(KeyCode.JoystickButton6);
+                bool padA     = Input.GetKey(KeyCode.JoystickButton1);
+                bool padB     = Input.GetKey(KeyCode.JoystickButton0);
+                bool padX     = Input.GetKey(KeyCode.JoystickButton2);
+                bool padY     = Input.GetKey(KeyCode.JoystickButton3);
+                bool padL     = Input.GetKey(KeyCode.JoystickButton4);
+                bool padR     = Input.GetKey(KeyCode.JoystickButton5);
+                bool padL3    = Input.GetKey(KeyCode.JoystickButton8);
+                bool padR3    = Input.GetKey(KeyCode.JoystickButton9);
+
                 _inpUp    |= padUp;
                 _inpDown  |= padDown;
                 _inpLeft  |= padLeft;
@@ -403,6 +405,7 @@ namespace ArcadeParadiseFreePlayMod
         private static int _fbWidth, _fbHeight, _fbPitch;
         private static uint[] _framebuffer;
         private static uint[] _rotatedBuffer;
+        private static byte[] _rawVideoBuffer;
         private static bool _fbPortrait;
         private static string _systemDir;
         private static string _saveDir;
@@ -421,7 +424,8 @@ namespace ArcadeParadiseFreePlayMod
         private static double _audioResampleRatio = 1.0;
         private static bool _audioPlayingMode;
         private static float _audioGain = 1f;
-        private const double AUDIO_BUFFER_SECONDS = 0.10;
+        private static float _cabinetDistance;
+        private const double AUDIO_BUFFER_SECONDS = 0.30;
 
         private static HashSet<uint> _seenEnvCommands = new HashSet<uint>();
         private static RetroKeyboardEventDelegate _keyboardCallback;
@@ -826,6 +830,7 @@ namespace ArcadeParadiseFreePlayMod
             }
 
             float distance = Vector3.Distance(_audioSource.transform.position, listener.position);
+            _cabinetDistance = distance;
             float gain;
             if (distance <= 1f)
                 gain = 1f;
@@ -941,12 +946,14 @@ namespace ArcadeParadiseFreePlayMod
             _fbPortrait = false;
             _rotatedBuffer = null;
             _framebuffer = null;
+            _rawVideoBuffer = null;
             Console.WriteLine("[LibretroHost] Core unloaded");
         }
 
         public static int FramebufferWidth => _fbPortrait ? _fbHeight : _fbWidth;
         public static int FramebufferHeight => _fbPortrait ? _fbWidth : _fbHeight;
         public static uint PixelFormat => _pixelFormat;
+        public static float CabinetDistance => _cabinetDistance;
         public static int FrameCount => _frameCount;
         public static double TargetFps { get; private set; } = 60.0;
         public static double FrameTimeSeconds => 1.0 / TargetFps;
@@ -1058,15 +1065,17 @@ namespace ArcadeParadiseFreePlayMod
                 uint rowPitch = (uint)_fbPitch;
                 if (rowPitch == 0) rowPitch = width * 2;
 
-                byte[] raw = new byte[rowPitch * height];
-                Marshal.Copy(data, raw, 0, raw.Length);
+                int rawLength = checked((int)(rowPitch * height));
+                if (_rawVideoBuffer == null || _rawVideoBuffer.Length < rawLength)
+                    _rawVideoBuffer = new byte[rawLength];
+                Marshal.Copy(data, _rawVideoBuffer, 0, rawLength);
 
                 for (int y = 0; y < height; y++)
                 {
                     for (int x = 0; x < width; x++)
                     {
                         int srcIdx = (int)(y * rowPitch + x * 2);
-                        ushort px = (ushort)(raw[srcIdx] | (raw[srcIdx + 1] << 8));
+                        ushort px = (ushort)(_rawVideoBuffer[srcIdx] | (_rawVideoBuffer[srcIdx + 1] << 8));
                         byte r = (byte)((px >> 11) & 0x1F);
                         byte g = (byte)((px >> 5) & 0x3F);
                         byte b = (byte)(px & 0x1F);

@@ -105,8 +105,6 @@ namespace ArcadeParadiseFreePlayMod
                 MelonLogger.Msg("BaseScene ready: injecting FreePlay cabinet");
                 SpawnFreePlayCabinet(activateCabinet: false);
             }
-
-            TryInjectFreePlayShop();
         }
 
         private void TryInjectFreePlayShop()

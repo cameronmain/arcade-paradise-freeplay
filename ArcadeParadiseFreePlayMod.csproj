@@ -12,6 +12,7 @@
 		<AssemblyName>ArcadeParadiseFreePlayMod</AssemblyName>
 		<LangVersion>latest</LangVersion>
 		<ImplicitUsings>enable</ImplicitUsings>
+		<Optimize>true</Optimize>
 	</PropertyGroup>
 
 	<ItemGroup>
