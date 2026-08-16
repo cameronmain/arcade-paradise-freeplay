@@ -424,8 +424,10 @@ namespace ArcadeParadiseFreePlayMod
         private static double _audioResampleRatio = 1.0;
         private static bool _audioPlayingMode;
         private static float _audioGain = 1f;
+        private static float _audioPan; // -1 (full left) .. +1 (full right), applied on the audio thread
         private static float _cabinetDistance;
         private const double AUDIO_BUFFER_SECONDS = 0.30;
+        private const float ATTRACT_GAIN = 0.7f; // attract audio is injected via OnAudioFilterRead, which bypasses unity's 3D rolloff, so cap its level here
 
         private static HashSet<uint> _seenEnvCommands = new HashSet<uint>();
         private static RetroKeyboardEventDelegate _keyboardCallback;
@@ -728,7 +730,24 @@ namespace ArcadeParadiseFreePlayMod
             buffer.Read(data, channels, _audioResampleRatio);
 
             float gain = Volatile.Read(ref _audioGain);
-            if (gain != 1f)
+            float pan = Volatile.Read(ref _audioPan);
+
+            if (channels >= 2)
+            {
+                // balance panning keeps the centre at full level and fades the far channel;
+                // centred (pan == 0) leaves both channels untouched so play mode is unaffected
+                float gainL = gain * (pan <= 0f ? 1f : 1f - pan);
+                float gainR = gain * (pan >= 0f ? 1f : 1f + pan);
+                if (gainL != 1f || gainR != 1f)
+                {
+                    for (int i = 0; i + 1 < data.Length; i += 2)
+                    {
+                        data[i]     *= gainL;
+                        data[i + 1] *= gainR;
+                    }
+                }
+            }
+            else if (gain != 1f)
             {
                 for (int i = 0; i < data.Length; i++)
                     data[i] *= gain;
@@ -803,6 +822,7 @@ namespace ArcadeParadiseFreePlayMod
             SetInputEnabled(playing);
             _audioPlayingMode = playing;
             Volatile.Write(ref _audioGain, 1f);
+            Volatile.Write(ref _audioPan, 0f);
             if (_audioSource == null)
                 return;
 
@@ -831,6 +851,15 @@ namespace ArcadeParadiseFreePlayMod
 
             float distance = Vector3.Distance(_audioSource.transform.position, listener.position);
             _cabinetDistance = distance;
+
+            // manual stereo panning: OnAudioFilterRead bypasses unity's 3D panning,
+            // so derive left/right from the listener's facing direction
+            Vector3 toSource = _audioSource.transform.position - listener.position;
+            float lateral = toSource.sqrMagnitude > 0.0001f
+                ? Vector3.Dot(toSource.normalized, listener.right)
+                : 0f;
+            Volatile.Write(ref _audioPan, Mathf.Clamp(lateral, -1f, 1f));
+
             float gain;
             if (distance <= 2f)
                 gain = 1f;
@@ -840,6 +869,7 @@ namespace ArcadeParadiseFreePlayMod
                 gain = Mathf.Lerp(1f, 0.7f, (distance - 2f) / 2f);
             else
                 gain = Mathf.Lerp(0.7f, 0f, (distance - 4f) / 2f);
+            gain *= ATTRACT_GAIN;
 
             // OnAudioFilterRead injects samples after part of unitys normal AudioSource path, so enforce rolloff here on the main thread. 
             // guarantees silence beyond the cabinets attract-mode range without touching Unity from the audio thread
