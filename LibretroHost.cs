@@ -832,14 +832,14 @@ namespace ArcadeParadiseFreePlayMod
             float distance = Vector3.Distance(_audioSource.transform.position, listener.position);
             _cabinetDistance = distance;
             float gain;
-            if (distance <= 1f)
+            if (distance <= 2f)
                 gain = 1f;
-            else if (distance >= 3f)
+            else if (distance >= AttractFreezeRange)
                 gain = 0f;
-            else if (distance <= 2f)
-                gain = Mathf.Lerp(1f, 0.7f, distance - 1f);
+            else if (distance <= 4f)
+                gain = Mathf.Lerp(1f, 0.7f, (distance - 2f) / 2f);
             else
-                gain = Mathf.Lerp(0.7f, 0f, distance - 2f);
+                gain = Mathf.Lerp(0.7f, 0f, (distance - 4f) / 2f);
 
             // OnAudioFilterRead injects samples after part of unitys normal AudioSource path, so enforce rolloff here on the main thread. 
             // guarantees silence beyond the cabinets attract-mode range without touching Unity from the audio thread
@@ -954,6 +954,7 @@ namespace ArcadeParadiseFreePlayMod
         public static int FramebufferHeight => _fbPortrait ? _fbWidth : _fbHeight;
         public static uint PixelFormat => _pixelFormat;
         public static float CabinetDistance => _cabinetDistance;
+        public const float AttractFreezeRange = 6f; // freeze the attract demo beyond this distance
         public static int FrameCount => _frameCount;
         public static double TargetFps { get; private set; } = 60.0;
         public static double FrameTimeSeconds => 1.0 / TargetFps;

@@ -361,8 +361,15 @@ namespace ArcadeParadiseFreePlayMod
             // Don't run the attract demo in the background while nobody is near the
             // cabinet; it otherwise burns main-thread time and makes controller
             // input hitch across the whole game.
-            if (_attractMode && LibretroHost.CabinetDistance >= 3f)
+            if (_attractMode && LibretroHost.CabinetDistance >= LibretroHost.AttractFreezeRange)
+            {
+                // while frozen the stock machine can swap in its own attract screen
+                // (Graffiti Ballz, since we clone that template), so keep our frame visible
+                if (_machine?.m_Screen != null && _screenMaterial != null &&
+                    _machine.m_Screen.material != _screenMaterial)
+                    _machine.m_Screen.material = _screenMaterial;
                 return;
+            }
 
             // frame pacing: run emulator frames at the cores target rate
             _emuFrameAccum += Time.unscaledDeltaTime;
