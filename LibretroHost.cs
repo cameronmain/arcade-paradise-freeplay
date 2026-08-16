@@ -428,6 +428,7 @@ namespace ArcadeParadiseFreePlayMod
         private static float _cabinetDistance;
         private const double AUDIO_BUFFER_SECONDS = 0.30;
         private const float ATTRACT_GAIN = 0.7f; // attract audio is injected via OnAudioFilterRead, which bypasses unity's 3D rolloff, so cap its level here
+        private const float BASE_GAIN = 2f / 3f; // master trim
 
         private static HashSet<uint> _seenEnvCommands = new HashSet<uint>();
         private static RetroKeyboardEventDelegate _keyboardCallback;
@@ -729,7 +730,7 @@ namespace ArcadeParadiseFreePlayMod
 
             buffer.Read(data, channels, _audioResampleRatio);
 
-            float gain = Volatile.Read(ref _audioGain);
+            float gain = Volatile.Read(ref _audioGain) * BASE_GAIN;
             float pan = Volatile.Read(ref _audioPan);
 
             if (channels >= 2)
