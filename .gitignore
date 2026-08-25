@@ -31,6 +31,9 @@ lastrom.txt
 system/
 saves/
 
+# Release packages
+releases/
+
 # OS files
 .DS_Store
 Thumbs.db
