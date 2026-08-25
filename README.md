@@ -1,5 +1,7 @@
 # Arcade Paradise Freeplay Mod
 
+![Freeplay cabinet running arcade ROMs in Arcade Paradise](images/freeplay-tile.jpg)
+
 A MelonLoader mod that adds a libretro-powered arcade cabinet to [Arcade Paradise](https://store.steampowered.com/app/1388870/Arcade_Paradise/), letting you play compatible classic arcade ROMs from inside the game.
 
 > **Note:** This mod changes arcade-machine and save-data behaviour. Back up your Arcade Paradise save files before installing or testing it. Use the mod at your own risk, particularly when adding it to an existing save or removing it from one.
