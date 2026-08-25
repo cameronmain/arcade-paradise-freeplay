@@ -10,9 +10,10 @@ namespace ArcadeParadiseFreePlayMod
     /// Preferences-only config for a FreePlay cabinet.
     /// ROMs are always auto-detected from the roms/ folder.
     /// cabinet.json is optional; only currently used to set default ROM game.
+    /// defaultRom can be a specific filename or "auto" to start at the first ROM.
     /// 
     /// Example:
-    ///   { "defaultRom": "wjammers.zip", "core": "auto", "systemDir": "auto" }
+    ///   { "defaultRom": "auto", "core": "auto", "systemDir": "auto" }
     /// </summary>
     public class CabinetConfig
     {
@@ -98,7 +99,7 @@ namespace ArcadeParadiseFreePlayMod
 
         /// <summary>
         /// Find the index of defaultRom in the scanned ROM list.
-        /// Returns 0 if defaultRom is null or not found.
+        /// Returns 0 if defaultRom is null, "auto" or not found.
         /// </summary>
         public static int GetDefaultRomIndex(string[] romPaths, CabinetConfig config)
         {
@@ -106,6 +107,8 @@ namespace ArcadeParadiseFreePlayMod
                 return 0;
 
             string target = config.defaultRom;
+            if (string.Equals(target, "auto", StringComparison.OrdinalIgnoreCase))
+                return 0;
             for (int i = 0; i < romPaths.Length; i++)
             {
                 if (string.Equals(Path.GetFileName(romPaths[i]), target, StringComparison.OrdinalIgnoreCase))

@@ -127,6 +127,20 @@ Core DLLs are intentionally ignored by this source repository's `.gitignore`, so
 
 Do **not** include copyrighted ROMs or BIOS files unless you have the legal right to redistribute them.
 
+## Choosing the starting ROM
+
+`cabinet.json` can set which ROM the cabinet starts with when more than one is available. Set `defaultRom` to a filename from your `roms/` folder, or to `auto` to start at the first ROM:
+
+```json
+{
+  "defaultRom": "auto",
+  "core": "auto",
+  "systemDir": "auto"
+}
+```
+
+If `defaultRom` is `auto`, omitted, or the named ROM is not in `roms/`, the cabinet starts at the first ROM in the folder.
+
 ## Changing the emulator core
 
 The default core is `fbalpha2012_libretro.dll`, but advanced users can test another compatible libretro core without rebuilding the mod:
