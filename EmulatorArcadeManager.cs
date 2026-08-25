@@ -350,9 +350,9 @@ namespace ArcadeParadiseFreePlayMod
                 return;
             }
 
-            // ── ROM browser hotkey (F9) ──────────────────────
+            // ── ROM browser hotkey (F2) ──────────────────────
             if (!_attractMode && _romList != null && _romList.Length > 1 &&
-                UnityEngine.Input.GetKeyDown(KeyCode.F9))
+                UnityEngine.Input.GetKeyDown(KeyCode.F2))
             {
                 OpenRomBrowser(returnToPlay: true);
                 return;

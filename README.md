@@ -63,7 +63,7 @@ The mod scans the `roms/` directory for `.zip` files and creates the folder auto
 ## Using the cabinet
 
 - Interact with the cabinet to start the currently selected ROM.
-- While playing, press **F9** to open the ROM browser when more than one ROM is available.
+- While playing, press **F2** to open the ROM browser when more than one ROM is available.
 - Use **Up/Down** or **W/S** to select a ROM.
 - Press **Enter** or **Space** to launch the selected ROM.
 - Press **Escape** or **Backspace** to leave the ROM browser.
