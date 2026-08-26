@@ -265,8 +265,20 @@ namespace ArcadeParadiseFreePlayMod
             {
                 if (__instance.m_ArcadeMachineDatafile?.m_ID != FREE_PLAY_MACHINE_ID) return;
                 SetFreePlayPdaInputBlocked(false);
+
+                // uninitialised games get CancelLoad() on exit whose coroutine deactivates m_Root (the cabinet itself)
+                // so stop it and cancel the stock screen swap
+                __instance.CancelInvoke("SwapToLookingAt");
                 __instance.CancelInvoke("SwapToAttractMode");
-                MelonLogger.Msg("[Harmony] OnDisconnect completed: cancelled attract screen swap");
+
+                if (__instance.m_Game is EmulatorArcadeManager emu)
+                {
+                    emu.StopAllCoroutines();
+                    if (!__instance.gameObject.activeSelf)
+                        __instance.gameObject.SetActive(true);
+                }
+
+                MelonLogger.Msg("[Harmony] OnDisconnect completed: FreePlay cabinet kept visible");
             }
 
             private static Exception Finalizer(ArcadeMachineComponent __instance, Exception __exception)

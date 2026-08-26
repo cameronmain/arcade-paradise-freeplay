@@ -199,6 +199,17 @@ namespace ArcadeParadiseFreePlayMod
                             SpawnFreePlayCabinet();
                         }
 
+                        // a placed cabinet must never be hidden as the stock game can deactivate it
+                        // (e.g. the CancelLoadGame coroutine after a failed ROM load)
+                        if (mgr?.m_arcadeMachineDictionaryByID != null
+                            && mgr.m_arcadeMachineDictionaryByID.TryGetValue(FREE_PLAY_MACHINE_ID, out var hiddenMachine)
+                            && hiddenMachine != null && hiddenMachine.gameObject != null
+                            && !hiddenMachine.gameObject.activeSelf)
+                        {
+                            hiddenMachine.gameObject.SetActive(true);
+                            MelonLogger.Msg("FreePlay cabinet was inactive: reactivated");
+                        }
+
                         if (mgr?.m_arcadeMachineDictionaryByID != null
                             && mgr.m_arcadeMachineDictionaryByID.TryGetValue(FREE_PLAY_MACHINE_ID, out var mc)
                             && mc != null && mc.gameObject != null && mc.gameObject.activeSelf)
