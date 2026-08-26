@@ -86,8 +86,8 @@ Keyboard input is available as a fallback. The current keyboard mapping passed t
 | Arcade input | Keyboard |
 | --- | --- |
 | Up / Down / Left / Right | Arrow keys or W/S/A/D |
-| Start | Enter or 1 |
-| Coin | 5 |
+| Start | Enter |
+| Coin | C |
 | Action button 1 | Left Alt or X |
 | Action button 2 | Left Ctrl or Z |
 

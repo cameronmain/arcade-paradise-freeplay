@@ -331,8 +331,8 @@ namespace ArcadeParadiseFreePlayMod
             bool kbDown  = IsWinKeyDown(KeyCode.DownArrow)  || IsWinKeyDown(KeyCode.S);
             bool kbLeft  = IsWinKeyDown(KeyCode.LeftArrow)  || IsWinKeyDown(KeyCode.A);
             bool kbRight = IsWinKeyDown(KeyCode.RightArrow) || IsWinKeyDown(KeyCode.D);
-            bool kbStart = IsWinKeyDown(KeyCode.Return)     || IsWinKeyDown(KeyCode.Alpha1);
-            bool kbCoin  = IsWinKeyDown(KeyCode.Alpha5);
+            bool kbStart = IsWinKeyDown(KeyCode.Return);
+            bool kbCoin  = IsWinKeyDown(KeyCode.C);
             bool kbA     = IsWinKeyDown(KeyCode.LeftAlt)    || IsWinKeyDown(KeyCode.X);
             bool kbB     = IsWinKeyDown(KeyCode.LeftControl)|| IsWinKeyDown(KeyCode.Z);
 
