@@ -5,7 +5,7 @@ using Il2CppRAT.Managers;
 using MelonLoader;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(ArcadeParadiseFreePlayMod.Core), "ArcadeParadiseFreePlayModv1.0.0", "1.0.0", "supermain", null)]
+[assembly: MelonInfo(typeof(ArcadeParadiseFreePlayMod.Core), "ArcadeParadiseFreePlayModv1.0.1", "1.0.1", "supermain", null)]
 [assembly: MelonGame("Nosebleed Interactive", "Arcade Paradise")]
 
 namespace ArcadeParadiseFreePlayMod
