@@ -19,7 +19,7 @@ The **FB Alpha 2012** libretro core is the arcade emulation engine used by this 
 
 For the most reliable results, use ZIP archives from the FB Alpha v0.2.97.39 set used for testing, preferably full non-merged sets when using individual games. The definitive version is the one reported by the core in the MelonLoader log when it starts. The mod does not validate ROM checksums itself; the core decides whether an archive can be loaded.
 
-The scanner currently exposes only direct `.zip` files in `FreePlay/roms/`. It does not expose `.7z` files, and there is no special CHD or multi-disc handling. Arcade ROMs must keep the filename expected by the core; renaming an archive can prevent it from being recognised.
+The scanner exposes direct `.zip` files for arcade cores and direct `.gba` files for GBA cores such as mGBA. It does not expose `.7z` files, and there is no special CHD or multi-disc handling. mGBA should be given the extracted `.gba` image rather than a ZIP archive. Arcade ROMs must keep the filename expected by the core; renaming an archive can prevent it from being recognised.
 
 ## Installation
 
@@ -51,8 +51,9 @@ Arcade/
         ├── cabinet.png
         ├── fbalpha2012_libretro.dll
         └── roms/
-            ├── your-game.zip
-            └── another-game.zip
+            ├── your-game.zip       (arcade core)
+            ├── another-game.zip    (arcade core)
+            └── pokemon-emerald.gba (mGBA/GBA core)
 ```
 
 Do not include ROMs in public releases. Users must provide their own legally obtained game data.
@@ -69,7 +70,7 @@ The mod scans the `roms/` directory for `.zip` files and creates the folder auto
 - Use **Up/Down** or **W/S** to select a ROM.
 - Press **Enter** or **Space** to launch the selected ROM.
 - Press **Escape** or **Backspace** to leave the ROM browser.
-- The last successfully selected ROM is remembered in `FreePlay/lastrom.txt`.
+- The last successfully selected ROM is remembered in `FreePlay/lastrom.txt`. Battery-backed game saves are stored by the core in `FreePlay/system/saves/`; for GBA games, leave the core's save handling enabled and do not delete this directory.
 
 ### Recommended input
 
@@ -103,7 +104,7 @@ The exact controls may vary between games and cores.
 
 ### The cabinet reports `NO ROMS FOUND`
 
-- Confirm that the files are `.zip` archives, not folders or another archive format.
+- For arcade cores, confirm that the files are `.zip` archives. For mGBA, confirm that the game is an extracted `.gba` file, not a ZIP archive.
 - Confirm that they are directly inside `Arcade/Mods/FreePlay/roms/`.
 - Make sure the files are not only BIOS archives, which are intentionally hidden from the game list.
 

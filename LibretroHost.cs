@@ -409,6 +409,8 @@ namespace ArcadeParadiseFreePlayMod
         private static bool _fbPortrait;
         private static string _systemDir;
         private static string _saveDir;
+        private static string _currentGameName;
+        private static string _currentSavePath;
         private static string _contentDir;
         private static int _frameCount;
         private static bool _coreInitialized;
@@ -489,7 +491,12 @@ namespace ArcadeParadiseFreePlayMod
         private static RetroGetMemoryDataDelegate _retro_get_memory_data;
         private static RetroGetMemorySizeDelegate _retro_get_memory_size;
 
+        public const uint RETRO_MEMORY_SAVE_RAM = 0;
+        public const uint RETRO_MEMORY_RTC = 1;
         public const uint RETRO_MEMORY_VIDEO_RAM = 2;
+
+        private static byte[] _saveRamSnapshot;
+        private static bool _saveRamDirty;
         public const uint RETRO_PIXEL_FORMAT_RGB565 = 0;
         public const uint RETRO_PIXEL_FORMAT_XRGB8888 = 1;
         // Libretro device values: JOYPAD=1, KEYBOARD=3, ANALOG=5.
@@ -672,6 +679,9 @@ namespace ArcadeParadiseFreePlayMod
         public static bool LoadGame(string romPath)
         {
             _contentDir = Path.GetDirectoryName(Path.GetFullPath(romPath)) ?? _systemDir;
+            _currentGameName = Path.GetFileNameWithoutExtension(romPath);
+            _currentSavePath = Path.Combine(_saveDir ?? _systemDir, _currentGameName + ".sav");
+            Directory.CreateDirectory(_saveDir ?? _systemDir);
 
             var pathPtr = Marshal.StringToHGlobalAnsi(romPath);
             var gameInfo = new RetroGameInfo();
@@ -689,6 +699,12 @@ namespace ArcadeParadiseFreePlayMod
                 Console.WriteLine($"[LibretroHost] Failed to load game: {romPath}");
                 return false;
             }
+
+            Console.WriteLine($"[LibretroHost] Save path: {_currentSavePath}");
+            _saveRamSnapshot = null;
+            _saveRamDirty = false;
+            LoadExistingSaveRam();
+            LogSaveRamStatus("after load");
 
             var avInfo = new RetroSystemAvInfo();
             _retro_get_system_av_info(ref avInfo);
@@ -716,6 +732,112 @@ namespace ArcadeParadiseFreePlayMod
         {
             _retro_run();
             _frameCount++;
+            DetectAndPersistSaveRam();
+        }
+
+        private static void LoadExistingSaveRam()
+        {
+            try
+            {
+                ulong size = _retro_get_memory_size(RETRO_MEMORY_SAVE_RAM).ToUInt64();
+                IntPtr data = _retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+                if (size == 0 || data == IntPtr.Zero || size > int.MaxValue)
+                    return;
+
+                int length = (int)size;
+                if (!File.Exists(_currentSavePath))
+                {
+                    Console.WriteLine($"[LibretroHost] No existing save found: {_currentSavePath}");
+                    return;
+                }
+
+                byte[] save = File.ReadAllBytes(_currentSavePath);
+                if (save.Length != length)
+                {
+                    Console.WriteLine($"[LibretroHost] Ignoring save with size {save.Length}; core expects {length} bytes: {_currentSavePath}");
+                    return;
+                }
+
+                Marshal.Copy(save, 0, data, length);
+                _saveRamSnapshot = new byte[length];
+                Buffer.BlockCopy(save, 0, _saveRamSnapshot, 0, length);
+                Console.WriteLine($"[LibretroHost] Existing save loaded: {save.Length} bytes");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[LibretroHost] Existing save load failed: {ex.Message}");
+            }
+        }
+
+        private static void DetectAndPersistSaveRam()
+        {
+            if (!_gameLoaded || _retro_get_memory_data == null || _retro_get_memory_size == null)
+                return;
+
+            try
+            {
+                ulong size = _retro_get_memory_size(RETRO_MEMORY_SAVE_RAM).ToUInt64();
+                IntPtr data = _retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+                if (size == 0 || data == IntPtr.Zero || size > int.MaxValue)
+                    return;
+
+                int length = (int)size;
+                if (_saveRamSnapshot == null || _saveRamSnapshot.Length != length)
+                {
+                    _saveRamSnapshot = new byte[length];
+                    Marshal.Copy(data, _saveRamSnapshot, 0, length);
+                    return;
+                }
+
+                byte[] current = new byte[length];
+                Marshal.Copy(data, current, 0, length);
+                bool changed = false;
+                for (int i = 0; i < length; i++)
+                {
+                    if (current[i] != _saveRamSnapshot[i])
+                    {
+                        changed = true;
+                        break;
+                    }
+                }
+
+                if (!changed)
+                    return;
+
+                Directory.CreateDirectory(_saveDir ?? _systemDir);
+                string tempPath = _currentSavePath + ".tmp";
+                File.WriteAllBytes(tempPath, current);
+                if (File.Exists(_currentSavePath))
+                    File.Replace(tempPath, _currentSavePath, null);
+                else
+                    File.Move(tempPath, _currentSavePath);
+                Buffer.BlockCopy(current, 0, _saveRamSnapshot, 0, length);
+                _saveRamDirty = true;
+                Console.WriteLine($"[LibretroHost] Save RAM persisted: {length} bytes");
+            }
+            catch (Exception ex)
+            {
+                if (!_saveRamDirty)
+                    Console.WriteLine($"[LibretroHost] Save RAM write failed: {ex.Message}");
+            }
+        }
+
+        private static void LogSaveRamStatus(string phase)
+        {
+            try
+            {
+                ulong size = _retro_get_memory_size != null
+                    ? _retro_get_memory_size(RETRO_MEMORY_SAVE_RAM).ToUInt64()
+                    : 0;
+                IntPtr data = _retro_get_memory_data != null
+                    ? _retro_get_memory_data(RETRO_MEMORY_SAVE_RAM)
+                    : IntPtr.Zero;
+                Console.WriteLine($"[LibretroHost] Save RAM {phase}: size={size}, address=0x{data.ToInt64():X}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[LibretroHost] Save RAM status unavailable: {ex.Message}");
+            }
         }
 
         public static void ReadAudio(Il2CppStructArray<float> data, int channels)
@@ -912,6 +1034,8 @@ namespace ArcadeParadiseFreePlayMod
 
         public static void Shutdown()
         {
+            // mGBA writes battery-backed RAM during retro_unload_game(). Always
+            // unload the content before deinitialising the core so SRAM reaches disk.
             // Stop Unity audio and release emulator input before unloading the
             // native core. This also handles failed/repeated shutdowns where no
             // core handle remains.
@@ -929,7 +1053,12 @@ namespace ArcadeParadiseFreePlayMod
             }
 
             if (_gameLoaded && _retro_unload_game != null)
+            {
+                // The core owns this pointer and may free it during unload.
+                // Snapshot SRAM before unloading, never dereference it afterward.
+                DetectAndPersistSaveRam();
                 _retro_unload_game();
+            }
             _gameLoaded = false;
 
             if (_coreInitialized && _retro_deinit != null)
@@ -999,7 +1128,10 @@ namespace ArcadeParadiseFreePlayMod
                     return true;
 
                 case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
-                    Marshal.WriteIntPtr(data, Marshal.StringToHGlobalAnsi(_saveDir));
+                    // The core uses this directory for battery-backed saves such
+                    // as GBA SRAM/flash memory. Keep it stable across launches.
+                    Directory.CreateDirectory(_saveDir ?? _systemDir);
+                    Marshal.WriteIntPtr(data, Marshal.StringToHGlobalAnsi(_saveDir ?? _systemDir));
                     return true;
 
                 case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:

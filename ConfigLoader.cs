@@ -56,16 +56,20 @@ namespace ArcadeParadiseFreePlayMod
         };
 
         /// <summary>
-        /// Scan the roms/ folder and return full paths to all .zip files, excluding known BIOS files. 
-        /// Sorted alphabetically for predictable order.
+        /// Scan the roms/ folder for content supported by the selected core.
+        /// Arcade cores commonly use ZIP archives, while GBA cores such as mGBA
+        /// expect the extracted .gba image. Sorted alphabetically for predictable order.
         /// </summary>
         public static string[] ScanRoms()
         {
             Directory.CreateDirectory(RomsDir);
-            var files = Directory.GetFiles(RomsDir, "*.zip");
-            files = Array.FindAll(files, f => !_biosFiles.Contains(Path.GetFileName(f)));
-            Array.Sort(files, StringComparer.OrdinalIgnoreCase);
-            return files;
+
+            var files = new List<string>();
+            files.AddRange(Directory.GetFiles(RomsDir, "*.zip"));
+            files.AddRange(Directory.GetFiles(RomsDir, "*.gba"));
+            files = files.FindAll(f => !_biosFiles.Contains(Path.GetFileName(f)));
+            files.Sort(StringComparer.OrdinalIgnoreCase);
+            return files.ToArray();
         }
 
         public static CabinetConfig Load()
