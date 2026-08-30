@@ -130,8 +130,8 @@ namespace ArcadeParadiseFreePlayMod
                     _corePath = config.core;
                     _systemDir = config.systemDir;
 
-                // always autoscan roms/ folder. Config only sets the starting game.
-                _romList = ConfigLoader.ScanRoms();
+                // Scan only content supported by the configured core. GBA cores must not receive arcade ZIPs, and arcade cores must not receive raw GBA images
+                _romList = ConfigLoader.ScanRoms(_corePath);
 
                 // fallback: if roms/ is empty, try wjammers.zip in the FreePlay folder
                 if (_romList.Length == 0)

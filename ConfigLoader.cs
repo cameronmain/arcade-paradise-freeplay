@@ -60,13 +60,19 @@ namespace ArcadeParadiseFreePlayMod
         /// Arcade cores commonly use ZIP archives, while GBA cores such as mGBA
         /// expect the extracted .gba image. Sorted alphabetically for predictable order.
         /// </summary>
-        public static string[] ScanRoms()
+        public static string[] ScanRoms(string corePath = null)
         {
             Directory.CreateDirectory(RomsDir);
 
             var files = new List<string>();
-            files.AddRange(Directory.GetFiles(RomsDir, "*.zip"));
-            files.AddRange(Directory.GetFiles(RomsDir, "*.gba"));
+            string coreName = Path.GetFileName(corePath ?? string.Empty);
+            bool isGbaCore = coreName.IndexOf("mgba", StringComparison.OrdinalIgnoreCase) >= 0;
+
+            if (isGbaCore)
+                files.AddRange(Directory.GetFiles(RomsDir, "*.gba"));
+            else
+                files.AddRange(Directory.GetFiles(RomsDir, "*.zip"));
+
             files = files.FindAll(f => !_biosFiles.Contains(Path.GetFileName(f)));
             files.Sort(StringComparer.OrdinalIgnoreCase);
             return files.ToArray();
